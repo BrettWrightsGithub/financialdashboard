@@ -116,24 +116,31 @@ export interface Counterparty {
 // Expected Inflow from expected_inflows table
 export interface ExpectedInflow {
   id: string;
-  counterparty_id: string;
-  description: string;
-  amount: number;
-  frequency: string;
-  due_day_of_month: number;
-  account_id: string;
-  category_id: string;
-  active: boolean;
+  source: string;
+  counterparty_id: string | null;
+  expected_amount: number;
+  expected_date: string | null;
+  recurrence: string | null;
+  category_id: string | null;
+  matched_transaction_id: string | null;
+  actual_amount: number | null;
+  actual_date: string | null;
+  status: "pending" | "received" | "partial" | "missed";
+  month: string;
+  notes: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 // Budget Target from budget_targets table
 export interface BudgetTarget {
   id: string;
-  period_month: string; // First day of month, e.g., "2025-03-01"
   category_id: string;
+  month: string; // First day of month, e.g., "2025-03-01"
   amount: number;
   notes: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 // Budget target with category details

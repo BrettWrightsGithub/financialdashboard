@@ -1,34 +1,20 @@
 "use client";
 
-import { formatCurrency } from "@/lib/cashflow";
+export type AlertType = "warning" | "danger" | "info";
 
-type AlertType = "warning" | "danger" | "info";
-
-interface Alert {
+export interface Alert {
   id: string;
   type: AlertType;
   title: string;
   message: string;
 }
 
-// TODO: Generate alerts dynamically based on real data
-const MOCK_ALERTS: Alert[] = [
-  {
-    id: "1",
-    type: "warning",
-    title: "Dining Out over budget",
-    message: "You've spent $450 of your $300 budget (150% used)",
-  },
-  {
-    id: "2",
-    type: "info",
-    title: "Outstanding income",
-    message: "You have $395 in expected inflows not yet received",
-  },
-];
+interface AlertsCardProps {
+  alerts: Alert[];
+}
 
-export function AlertsCard() {
-  if (MOCK_ALERTS.length === 0) {
+export function AlertsCard({ alerts }: AlertsCardProps) {
+  if (alerts.length === 0) {
     return null;
   }
 
@@ -39,7 +25,7 @@ export function AlertsCard() {
       </h2>
 
       <div className="space-y-3">
-        {MOCK_ALERTS.map((alert) => (
+        {alerts.map((alert) => (
           <AlertItem key={alert.id} alert={alert} />
         ))}
       </div>

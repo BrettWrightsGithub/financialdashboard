@@ -2,15 +2,17 @@
 
 import { formatCurrency } from "@/lib/cashflow";
 
-// TODO: Replace with real data from Supabase
-const MOCK_DATA = {
-  safeToSpend: 342,
-  weeklyTarget: 500,
-  spentThisWeek: 158,
-};
+interface SafeToSpendCardProps {
+  safeToSpend: number;
+  weeklyTarget: number;
+  spentThisWeek: number;
+}
 
-export function SafeToSpendCard() {
-  const { safeToSpend, weeklyTarget, spentThisWeek } = MOCK_DATA;
+export function SafeToSpendCard({
+  safeToSpend,
+  weeklyTarget,
+  spentThisWeek,
+}: SafeToSpendCardProps) {
   const percentUsed = (spentThisWeek / weeklyTarget) * 100;
   const isOverBudget = safeToSpend < 0;
 

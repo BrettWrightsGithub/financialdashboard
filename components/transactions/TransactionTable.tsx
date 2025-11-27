@@ -2,157 +2,16 @@
 
 import { useState } from "react";
 import { formatCurrencyPrecise } from "@/lib/cashflow";
-import type { TransactionWithDetails, TransactionFilters, CashflowGroup } from "@/types/database";
+import { updateTransactionCategory } from "@/lib/queries";
+import type { TransactionWithDetails, Category } from "@/types/database";
 
 interface TransactionTableProps {
-  filters: TransactionFilters;
+  transactions: TransactionWithDetails[];
+  categories: Category[];
+  onTransactionUpdate?: () => void;
 }
 
-// TODO: Replace with real data from Supabase
-const MOCK_TRANSACTIONS: TransactionWithDetails[] = [
-  {
-    id: "1",
-    provider: "plaid",
-    provider_transaction_id: "txn_1",
-    account_id: "1",
-    provider_account_id: "acc_1",
-    date: "2025-11-25",
-    amount: -156.42,
-    description_raw: "COSTCO WHSE #1234 LEHI UT",
-    description_clean: "Costco",
-    life_category_id: "cat_1",
-    cashflow_group: "Variable Essentials",
-    flow_type: "Expense",
-    category_ai: "Groceries",
-    category_ai_conf: 0.95,
-    category_locked: false,
-    status: "posted",
-    provider_type: "card_payment",
-    processing_status: "complete",
-    counterparty_name: null,
-    counterparty_id: null,
-    is_transfer: false,
-    is_pass_through: false,
-    is_business: false,
-    created_at: "2025-11-25T10:00:00Z",
-    updated_at: "2025-11-25T10:00:00Z",
-    account_name: "Chase Credit Card",
-    category_name: "Groceries",
-  },
-  {
-    id: "2",
-    provider: "venmo",
-    provider_transaction_id: "txn_2",
-    account_id: "3",
-    provider_account_id: "venmo_1",
-    date: "2025-11-24",
-    amount: 1400,
-    description_raw: "Stephani Walker paid you $1400.00",
-    description_clean: "Stephani Walker",
-    life_category_id: "cat_2",
-    cashflow_group: "Income",
-    flow_type: "Income",
-    category_ai: "Rental Income",
-    category_ai_conf: 0.92,
-    category_locked: true,
-    status: "posted",
-    provider_type: null,
-    processing_status: "complete",
-    counterparty_name: "Stephani Walker",
-    counterparty_id: "cp_1",
-    is_transfer: false,
-    is_pass_through: false,
-    is_business: true,
-    created_at: "2025-11-24T15:30:00Z",
-    updated_at: "2025-11-24T15:30:00Z",
-    account_name: "Venmo",
-    category_name: "Rental Income",
-  },
-  {
-    id: "3",
-    provider: "plaid",
-    provider_transaction_id: "txn_3",
-    account_id: "1",
-    provider_account_id: "acc_1",
-    date: "2025-11-23",
-    amount: -23.45,
-    description_raw: "TST* CHIPOTLE 1234",
-    description_clean: "Chipotle",
-    life_category_id: "cat_3",
-    cashflow_group: "Discretionary",
-    flow_type: "Expense",
-    category_ai: "Dining Out",
-    category_ai_conf: 0.98,
-    category_locked: false,
-    status: "posted",
-    provider_type: "card_payment",
-    processing_status: "complete",
-    counterparty_name: null,
-    counterparty_id: null,
-    is_transfer: false,
-    is_pass_through: false,
-    is_business: false,
-    created_at: "2025-11-23T12:15:00Z",
-    updated_at: "2025-11-23T12:15:00Z",
-    account_name: "Chase Credit Card",
-    category_name: "Dining Out",
-  },
-  {
-    id: "4",
-    provider: "plaid",
-    provider_transaction_id: "txn_4",
-    account_id: "1",
-    provider_account_id: "acc_1",
-    date: "2025-11-22",
-    amount: -500,
-    description_raw: "TRANSFER TO SAVINGS",
-    description_clean: "Transfer to Savings",
-    life_category_id: "cat_4",
-    cashflow_group: "Transfer",
-    flow_type: "Transfer",
-    category_ai: "Transfer",
-    category_ai_conf: 1.0,
-    category_locked: false,
-    status: "posted",
-    provider_type: "transfer",
-    processing_status: "complete",
-    counterparty_name: null,
-    counterparty_id: null,
-    is_transfer: true,
-    is_pass_through: false,
-    is_business: false,
-    created_at: "2025-11-22T09:00:00Z",
-    updated_at: "2025-11-22T09:00:00Z",
-    account_name: "AFCU Checking",
-    category_name: "Transfer",
-  },
-];
-
-// TODO: Get from Supabase
-const MOCK_CATEGORIES = [
-  { id: "cat_1", name: "Groceries" },
-  { id: "cat_2", name: "Rental Income" },
-  { id: "cat_3", name: "Dining Out" },
-  { id: "cat_4", name: "Transfer" },
-  { id: "cat_5", name: "Salary" },
-  { id: "cat_6", name: "Shopping" },
-  { id: "cat_7", name: "Entertainment" },
-  { id: "cat_8", name: "Gas/Fuel" },
-];
-
-export function TransactionTable({ filters }: TransactionTableProps) {
-  // Apply filters
-  let filtered = MOCK_TRANSACTIONS.filter((t) => {
-    if (t.date < filters.dateRange.start || t.date > filters.dateRange.end) return false;
-    if (filters.accountId && t.account_id !== filters.accountId) return false;
-    if (filters.cashflowGroup && t.cashflow_group !== filters.cashflowGroup) return false;
-    if (filters.hideTransfers && t.is_transfer) return false;
-    if (filters.hidePassThrough && t.is_pass_through) return false;
-    return true;
-  });
-
-  // Sort by date descending
-  filtered = filtered.sort((a, b) => b.date.localeCompare(a.date));
+export function TransactionTable({ transactions, categories, onTransactionUpdate }: TransactionTableProps) {
 
   return (
     <div className="card overflow-hidden">
@@ -169,15 +28,20 @@ export function TransactionTable({ filters }: TransactionTableProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-            {filtered.length === 0 ? (
+            {transactions.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
                   No transactions found matching your filters.
                 </td>
               </tr>
             ) : (
-              filtered.map((transaction) => (
-                <TransactionRow key={transaction.id} transaction={transaction} />
+              transactions.map((transaction) => (
+                <TransactionRow
+                  key={transaction.id}
+                  transaction={transaction}
+                  categories={categories}
+                  onUpdate={onTransactionUpdate}
+                />
               ))
             )}
           </tbody>
@@ -185,9 +49,9 @@ export function TransactionTable({ filters }: TransactionTableProps) {
       </div>
 
       {/* Pagination placeholder */}
-      {filtered.length > 0 && (
+      {transactions.length > 0 && (
         <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between text-sm text-slate-600 dark:text-slate-400">
-          <span>Showing {filtered.length} transactions</span>
+          <span>Showing {transactions.length} transactions</span>
           <div className="flex gap-2">
             {/* TODO: Add pagination controls */}
           </div>
@@ -197,16 +61,33 @@ export function TransactionTable({ filters }: TransactionTableProps) {
   );
 }
 
-function TransactionRow({ transaction }: { transaction: TransactionWithDetails }) {
+function TransactionRow({
+  transaction,
+  categories,
+  onUpdate,
+}: {
+  transaction: TransactionWithDetails;
+  categories: Category[];
+  onUpdate?: () => void;
+}) {
   const [isEditing, setIsEditing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(transaction.life_category_id);
+  const [saving, setSaving] = useState(false);
 
   const isIncome = transaction.amount >= 0;
 
-  const handleCategoryChange = (newCategoryId: string) => {
+  const handleCategoryChange = async (newCategoryId: string) => {
     setSelectedCategory(newCategoryId);
-    // TODO: Update in Supabase and create category_override
-    setIsEditing(false);
+    setSaving(true);
+    try {
+      await updateTransactionCategory(transaction.id, newCategoryId);
+      onUpdate?.();
+    } catch (error) {
+      console.error("Failed to update category:", error);
+    } finally {
+      setSaving(false);
+      setIsEditing(false);
+    }
   };
 
   return (
@@ -241,7 +122,7 @@ function TransactionRow({ transaction }: { transaction: TransactionWithDetails }
             autoFocus
             className="select text-sm py-1"
           >
-            {MOCK_CATEGORIES.map((cat) => (
+            {categories.map((cat) => (
               <option key={cat.id} value={cat.id}>
                 {cat.name}
               </option>

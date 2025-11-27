@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { TransactionFilters } from "@/components/transactions/TransactionFilters";
 import { TransactionTable } from "@/components/transactions/TransactionTable";
-import type { TransactionFilters as FilterType } from "@/types/database";
+import { getTransactions, getCategories, getAccounts } from "@/lib/queries";
+import type { TransactionFilters as FilterType, TransactionWithDetails, Category, Account } from "@/types/database";
 
 export default function TransactionsPage() {
   const [filters, setFilters] = useState<FilterType>({
@@ -17,6 +18,44 @@ export default function TransactionsPage() {
     hidePassThrough: false,
   });
 
+  const [transactions, setTransactions] = useState<TransactionWithDetails[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchTransactions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getTransactions({
+        startDate: filters.dateRange.start,
+        endDate: filters.dateRange.end,
+        accountId: filters.accountId || undefined,
+        cashflowGroup: filters.cashflowGroup || undefined,
+        hideTransfers: filters.hideTransfers,
+        hidePassThrough: filters.hidePassThrough,
+      });
+      setTransactions(data);
+    } catch (error) {
+      console.error("Error fetching transactions:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, [filters]);
+
+  useEffect(() => {
+    // Fetch categories and accounts once on mount
+    async function fetchStaticData() {
+      const [cats, accts] = await Promise.all([getCategories(), getAccounts()]);
+      setCategories(cats);
+      setAccounts(accts);
+    }
+    fetchStaticData();
+  }, []);
+
+  useEffect(() => {
+    fetchTransactions();
+  }, [fetchTransactions]);
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -28,10 +67,24 @@ export default function TransactionsPage() {
       </div>
 
       {/* Filters */}
-      <TransactionFilters filters={filters} onFiltersChange={setFilters} />
+      <TransactionFilters
+        filters={filters}
+        onFiltersChange={setFilters}
+        accounts={accounts}
+      />
 
       {/* Transaction Table */}
-      <TransactionTable filters={filters} />
+      {loading ? (
+        <div className="card p-8 text-center text-slate-500 dark:text-slate-400">
+          Loading transactions...
+        </div>
+      ) : (
+        <TransactionTable
+          transactions={transactions}
+          categories={categories}
+          onTransactionUpdate={fetchTransactions}
+        />
+      )}
     </div>
   );
 }

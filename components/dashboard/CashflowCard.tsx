@@ -1,23 +1,20 @@
 "use client";
 
-import { formatCurrency, formatMonth, getCurrentMonth } from "@/lib/cashflow";
+import { formatCurrency, formatMonth } from "@/lib/cashflow";
 
-// TODO: Replace with real data from Supabase
-const MOCK_DATA = {
-  currentMonth: getCurrentMonth(),
-  income: 8500,
-  expenses: 7200,
-  netCashflow: 1300,
-  // Last 3 months for sparkline
-  history: [
-    { month: "2025-09", net: 850 },
-    { month: "2025-10", net: -200 },
-    { month: "2025-11", net: 1300 },
-  ],
-};
+interface CashflowCardProps {
+  currentMonth: string;
+  income: number;
+  expenses: number;
+  netCashflow: number;
+}
 
-export function CashflowCard() {
-  const { currentMonth, income, expenses, netCashflow, history } = MOCK_DATA;
+export function CashflowCard({
+  currentMonth,
+  income,
+  expenses,
+  netCashflow,
+}: CashflowCardProps) {
   const isPositive = netCashflow >= 0;
 
   return (
@@ -64,31 +61,6 @@ export function CashflowCard() {
         </div>
       </div>
 
-      {/* Mini Sparkline (simplified) */}
-      <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
-          Last 3 months
-        </p>
-        <div className="flex items-end gap-1 h-8">
-          {history.map((h, i) => {
-            const maxAbs = Math.max(...history.map((x) => Math.abs(x.net)));
-            const heightPercent = Math.abs(h.net) / maxAbs;
-            return (
-              <div
-                key={h.month}
-                className="flex-1 flex flex-col justify-end"
-              >
-                <div
-                  className={`rounded-sm ${
-                    h.net >= 0 ? "bg-green-400" : "bg-red-400"
-                  }`}
-                  style={{ height: `${heightPercent * 100}%`, minHeight: "4px" }}
-                />
-              </div>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }

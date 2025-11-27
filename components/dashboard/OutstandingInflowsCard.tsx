@@ -1,41 +1,18 @@
 "use client";
 
 import { formatCurrency } from "@/lib/cashflow";
-import type { OutstandingInflow } from "@/types/database";
+import type { ExpectedInflow } from "@/types/database";
 
-// TODO: Replace with real data from Supabase
-const MOCK_INFLOWS: OutstandingInflow[] = [
-  {
-    id: "1",
-    counterpartyName: "Stephani Walker",
-    description: "Eagle Mt Rent",
-    expected: 1400,
-    received: 1400,
-    outstanding: 0,
-    status: "received",
-  },
-  {
-    id: "2",
-    counterpartyName: "Rachel McBeth",
-    description: "Eagle Mt Rent",
-    expected: 700,
-    received: 350,
-    outstanding: 350,
-    status: "pending",
-  },
-  {
-    id: "3",
-    counterpartyName: "Fife",
-    description: "T-Mobile Share",
-    expected: 45,
-    received: 0,
-    outstanding: 45,
-    status: "overdue",
-  },
-];
+interface OutstandingInflowsCardProps {
+  inflows: ExpectedInflow[];
+}
 
-export function OutstandingInflowsCard() {
-  const totalOutstanding = MOCK_INFLOWS.reduce((sum, i) => sum + i.outstanding, 0);
+export function OutstandingInflowsCard({ inflows }: OutstandingInflowsCardProps) {
+  const pendingInflows = inflows.filter((i) => i.status === "pending");
+  const totalOutstanding = pendingInflows.reduce(
+    (sum, i) => sum + (i.expected_amount - (i.actual_amount || 0)),
+    0
+  );
   const hasOutstanding = totalOutstanding > 0;
 
   return (
@@ -53,27 +30,38 @@ export function OutstandingInflowsCard() {
 
       {/* Inflows List */}
       <div className="space-y-3">
-        {MOCK_INFLOWS.map((inflow) => (
-          <div
-            key={inflow.id}
-            className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-700 last:border-0"
-          >
-            <div className="flex-1">
-              <p className="text-sm font-medium text-slate-900 dark:text-white">
-                {inflow.counterpartyName}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                {inflow.description}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm font-medium text-slate-900 dark:text-white">
-                {formatCurrency(inflow.expected)}
-              </p>
-              <StatusBadge status={inflow.status} outstanding={inflow.outstanding} />
-            </div>
-          </div>
-        ))}
+        {inflows.length === 0 ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No expected inflows this month
+          </p>
+        ) : (
+          inflows.map((inflow) => {
+            const outstanding = inflow.expected_amount - (inflow.actual_amount || 0);
+            return (
+              <div
+                key={inflow.id}
+                className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-700 last:border-0"
+              >
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-slate-900 dark:text-white">
+                    {inflow.source}
+                  </p>
+                  {inflow.expected_date && (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Due: {new Date(inflow.expected_date).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-medium text-slate-900 dark:text-white">
+                    {formatCurrency(inflow.expected_amount)}
+                  </p>
+                  <StatusBadge status={inflow.status} outstanding={outstanding} />
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -83,7 +71,7 @@ function StatusBadge({
   status,
   outstanding,
 }: {
-  status: OutstandingInflow["status"];
+  status: ExpectedInflow["status"];
   outstanding: number;
 }) {
   if (status === "received") {
@@ -94,10 +82,18 @@ function StatusBadge({
     );
   }
 
-  if (status === "overdue") {
+  if (status === "missed") {
     return (
       <span className="text-xs text-red-600 dark:text-red-400">
-        ⚠ Overdue ({formatCurrency(outstanding)})
+        ⚠ Missed ({formatCurrency(outstanding)})
+      </span>
+    );
+  }
+
+  if (status === "partial") {
+    return (
+      <span className="text-xs text-amber-600 dark:text-amber-400">
+        Partial ({formatCurrency(outstanding)} left)
       </span>
     );
   }

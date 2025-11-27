@@ -1,10 +1,11 @@
 "use client";
 
-import type { TransactionFilters as FilterType, CashflowGroup } from "@/types/database";
+import type { TransactionFilters as FilterType, CashflowGroup, Account } from "@/types/database";
 
 interface TransactionFiltersProps {
   filters: FilterType;
   onFiltersChange: (filters: FilterType) => void;
+  accounts: Account[];
 }
 
 const CASHFLOW_GROUPS: CashflowGroup[] = [
@@ -18,15 +19,7 @@ const CASHFLOW_GROUPS: CashflowGroup[] = [
   "Transfer",
 ];
 
-// TODO: Replace with real accounts from Supabase
-const MOCK_ACCOUNTS = [
-  { id: "1", name: "AFCU Checking" },
-  { id: "2", name: "Chase Credit Card" },
-  { id: "3", name: "Venmo" },
-  { id: "4", name: "AFCU Savings" },
-];
-
-export function TransactionFilters({ filters, onFiltersChange }: TransactionFiltersProps) {
+export function TransactionFilters({ filters, onFiltersChange, accounts }: TransactionFiltersProps) {
   const updateFilter = <K extends keyof FilterType>(key: K, value: FilterType[K]) => {
     onFiltersChange({ ...filters, [key]: value });
   };
@@ -78,7 +71,7 @@ export function TransactionFilters({ filters, onFiltersChange }: TransactionFilt
             className="select text-sm min-w-[150px]"
           >
             <option value="">All Accounts</option>
-            {MOCK_ACCOUNTS.map((acc) => (
+            {accounts.map((acc) => (
               <option key={acc.id} value={acc.id}>
                 {acc.name}
               </option>

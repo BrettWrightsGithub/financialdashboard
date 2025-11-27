@@ -1,0 +1,209 @@
+# Financial Command Center
+
+A personal finance “command center” that aggregates bank accounts, credit cards, Venmo flows, rental income, and debts into a single place. The goal is to make it obvious:
+
+- Am I cashflow positive or negative this month?
+- What is my safe-to-spend amount **this week**?
+- Which inflows (rent, T-Mobile reimbursements, etc.) are still missing?
+
+---
+
+## Core Features (V1)
+
+- **Unified transaction ledger**
+  - Normalized `accounts` and `transactions` tables in Supabase.
+  - Data comes from Teller, Plaid (AFCU), and Gmail (Venmo) via n8n.
+- **Budget Planner**
+  - “Expected” values per category (income, fixed, essentials, discretionary, debt, savings).
+  - “Actual” values calculated from real transactions.
+  - Net Planned for the month (Income – Expenses – Savings).
+- **Weekly Safe-to-Spend**
+  - Uses only **discretionary** categories and ignores transfers / pass-through flows.
+- **Expected vs Received income**
+  - Tracks expected rent from tenants and T-Mobile shares from family.
+  - Shows outstanding amounts for the current month.
+- **Master Transaction Sheet**
+  - Filter by date, account, cashflow group, and flags (Transfer, Pass-Through, Business).
+  - Inline category edits with manual override tracking.
+
+---
+
+## Tech Stack
+
+**Frontend**
+
+- Next.js (App Router) with React and TypeScript.
+- TailwindCSS for styling and layout.
+
+**Data**
+
+- Supabase (PostgreSQL) as the single source of truth.
+- Key tables:
+  - accounts
+  - transactions
+  - categories
+  - budget_targets
+  - counterparties
+  - expected_inflows
+  - category_overrides
+
+**Automations (outside this repo)**
+
+- n8n orchestrates:
+  - Teller (non-AFCU accounts)
+  - Plaid (AFCU checking)
+  - Gmail (Venmo “paid you” emails)
+- n8n writes normalized rows into Supabase and calls an AI categorization service.
+
+**AI**
+
+- A separate micro-service (or n8n sub-workflow) categorizes transactions using the prompt spec in docs/ai/transaction_categorizer_v1.md.
+- The web app consumes the results; it does not contain the prompt logic directly.
+
+---
+
+## Data Flow (High Level)
+
+1. **Ingestion (n8n)**
+   - Teller and Plaid are polled on a schedule to sync accounts and transactions.
+   - Gmail node pulls Venmo emails with the label "venmo-payment" and parses payer, amount, and notes.
+   - All raw events become rows in Supabase:
+     - accounts
+     - transactions (provider, provider_transaction_id, account_id, amount, date, description_raw, etc.).
+
+2. **Categorization (AI service)**
+   - For each new transaction, AI returns:
+     - category_name
+     - cashflow_group
+     - flow_type
+     - flags: is_transfer, is_pass_through, is_business
+   - Results are stored on the transaction row.
+   - Manual overrides in the UI set category_locked and create category_overrides rows for learning.
+
+3. **Application (Next.js)**
+   - Reads from Supabase (with appropriate RLS).
+   - Computes:
+     - Monthly net cashflow
+     - Weekly Safe-to-Spend
+     - Expected inflows not yet received
+   - Renders Dashboard, Budget Planner, and Transactions views.
+
+For domain details (groups, flags, and formulas), see:
+
+- docs/financial-command-center-overview.md
+- docs/db-schema.md
+- docs/ai/transaction_categorizer_v1.md
+
+---
+
+## Screens
+
+### 1. Dashboard
+
+- Monthly net cashflow card (with short history).
+- Weekly Safe-to-Spend number.
+- Alerts:
+  - Cashflow negative this month.
+  - Overspend vs budget in key categories.
+  - Outstanding income (rent / T-Mobile) above a threshold.
+
+### 2. Budget Planner
+
+- Planned vs Actual for a selected month.
+- Sections:
+  - Income
+  - Fixed expenses
+  - Debt service
+  - Variable essentials
+  - Discretionary
+  - (Optional) Savings & Investing
+- Uses budget_targets for “Expected” and transactions for “Actual”.
+
+### 3. Transactions
+
+- Master transaction sheet:
+  - Date, Description, Category, Account, Amount.
+  - Flags: Transfer, Pass-Through, Business.
+- Filters:
+  - Date range (default: current month).
+  - Account.
+  - Cashflow group (Income, Fixed, Essentials, Discretionary, Debt, Savings, Business, Transfer).
+  - Toggles for hiding transfers and pass-through items.
+- Inline editing:
+  - Category dropdown.
+  - Flag checkboxes.
+  - Writes changes back to Supabase and logs category_overrides.
+
+---
+
+## Local Development
+
+### 1. Install dependencies
+
+'''
+npm install
+'''
+
+### 2. Environment variables
+
+Create a file named .env.local in the project root with:
+
+'''
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=service_role_key_for_server_only
+'''
+
+The service role key must only be used in server contexts (API routes or server components), never in the browser.
+
+### 3. Run the dev server
+
+'''
+npm run dev
+'''
+
+Then open:
+
+- http://localhost:3000
+
+---
+
+## Development Workflow with Windsurf
+
+This repo is designed to play nicely with Windsurf and Cascade.
+
+1. **Context bootstrapping**
+   - When starting a coding session, instruct Windsurf to read:
+     - .windsurfrules
+     - README.md
+     - docs/financial-command-center-overview.md
+     - docs/db-schema.md
+     - docs/ai/transaction_categorizer_v1.md
+
+2. **Use workflows**
+   - There are guiding files under .windsurf/workflows (for example, 01_bootstrap_app.md, 02_budget_planner_page.md).
+   - Ask Cascade to follow a specific workflow when implementing or modifying features.
+
+3. **Small, explicit tasks**
+   - Prefer focused instructions such as:
+     - “Implement the Budget Planner table using the schema in docs/db-schema.md.”
+     - “Add Safe-to-Spend calculation using lib/cashflow helpers.”
+
+4. **Keep docs as the source of truth**
+   - If you (or Windsurf) change the schema or domain behavior, update:
+     - docs/db-schema.md
+     - docs/financial-command-center-overview.md
+   - The .windsurfrules file assumes these docs are authoritative.
+
+---
+
+## Roadmap (Short)
+
+- [ ] Implement basic data fetching from Supabase for transactions and categories.
+- [ ] Build Transactions table with filters and category editing.
+- [ ] Implement Budget Planner view with Expected vs Actual per category.
+- [ ] Implement Dashboard Safe-to-Spend and cashflow cards.
+- [ ] Wire in expected_inflows and outstanding income logic.
+- [ ] Add simple unit tests for cashflow and Safe-to-Spend helpers in lib/cashflow.
+
+This README should be enough context for Windsurf (and future you) to understand what the project is trying to do and how the pieces fit together.

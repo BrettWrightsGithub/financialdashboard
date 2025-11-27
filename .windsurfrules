@@ -1,0 +1,53 @@
+# Project: Financial Command Center – Personal Finance OS
+
+1. Tech stack and architecture
+   - Frontend: Next.js (App Router), React, TypeScript, TailwindCSS.
+   - Backend: Next.js API routes for light server logic. Use Supabase (PostgreSQL) as the only database.
+   - State/data fetching: React Query or native Next.js data fetching (server components or route handlers), but keep things simple and explicit.
+   - Do NOT add complex backend frameworks (no NestJS, no Express server separate from Next.js) unless explicitly requested.
+
+2. Data model and source of truth
+   - The database schema and domain rules in `docs/db-schema.md` and `docs/financial-command-center-overview.md` are the canonical source of truth.
+   - Do NOT invent new tables or fields without updating `docs/db-schema.md`.
+   - Key tables: `accounts`, `transactions`, `categories`, `budget_targets`, `counterparties`, `expected_inflows`, `category_overrides`.
+
+3. External integrations and secrets
+   - Bank connections (Teller, Plaid) and Gmail/Venmo parsing are handled by **n8n** and back-office scripts, NOT directly from the Next.js app.
+   - The app reads normalized data from Supabase only.
+   - Never hard-code API keys or secrets. Only reference environment variables like `process.env.NEXT_PUBLIC_SUPABASE_URL` or `process.env.SUPABASE_SERVICE_ROLE_KEY`.
+   - Do NOT create any code that directly calls Teller, Plaid, or Gmail APIs from the browser.
+
+4. File organization
+   - Use the following structure unless asked otherwise:
+     - `app/` – Next.js routes (Dashboard, Budget Planner, Transactions).
+     - `app/(routes)/dashboard`, `app/(routes)/budget-planner`, `app/(routes)/transactions`.
+     - `components/` – Reusable React components (tables, cards, layout).
+     - `lib/` – Utility functions, Supabase client, domain logic (cashflow, safe-to-spend).
+     - `types/` – Shared TypeScript types matching the DB schema.
+   - Keep components small and focused. Prefer composition over very large “god components”.
+
+5. Styling and UI
+   - Use TailwindCSS utility classes for styling.
+   - Match the design in the mockups: clean, card-based layout; top nav with “Dashboard / Budget Planner / Transactions / PRD & Specs”.
+   - Avoid adding new design systems or component libraries unless explicitly requested.
+
+6. Domain rules
+   - Follow the cashflow and Safe-to-Spend logic described in `docs/financial-command-center-overview.md`.
+   - Respect category groupings and flags from `docs/db-schema.md` (e.g., `cashflow_group`, `is_transfer`, `is_pass_through`, `is_business`).
+   - T-Mobile reimbursements and similar pass-through flows must be treated as net-neutral cashflow, per the docs.
+
+7. AI categorization micro-service
+   - Use `docs/ai/transaction_categorizer_v1.md` as the canonical description of the AI categorization behavior.
+   - The Next.js app should treat categorization as an external service (HTTP endpoint or Supabase function), not re-implement the LLM prompt logic inline.
+
+8. Testing and quality
+   - When adding non-trivial logic (e.g., Safe-to-Spend calculations), create simple unit tests or at least pure functions in `lib/` that can be easily tested.
+   - Prefer clear, explicit code over clever one-liners.
+
+9. Safety and migrations
+   - Do NOT modify database migrations automatically. If a schema change is truly required, first update `docs/db-schema.md` and then generate explicit SQL migrations in a `supabase/` or `db/` folder if asked.
+   - Do NOT delete user data paths, even if they look unused.
+
+10. Developer experience
+   - Optimize for a low-code user: keep scripts, setup steps, and configuration simple and well-commented.
+   - When generating code, add short comments explaining “why” for more complex logic so that a non-expert can follow it.

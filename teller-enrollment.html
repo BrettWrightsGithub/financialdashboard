@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Teller Connect - Get Access Token</title>
+    <script src="https://cdn.teller.io/connect/connect.js"></script>
+  </head>
+  <body>
+    <h1>Link your Account to get an Access Token</h1>
+    <button id="connect-teller">Connect Bank</button>
+    <div id="result" style="margin-top: 20px; font-family: monospace; background: #f0f0f0; padding: 10px;"></div>
+
+    <script>
+      var tellerConnect = TellerConnect.setup({
+        applicationId: 'app_plggt2gbdk3bcvmo0k000', // Your App ID
+        environment: 'development', // or 'sandbox' for fake data, 'production' for real
+        onInit: function() {
+          console.log('Teller Connect initialized');
+        },
+        onSuccess: function(enrollment) {
+          console.log('User enrolled successfully', enrollment);
+          
+          // Display on screen
+          document.getElementById('result').innerHTML = 
+            '<strong>SUCCESS! Token Saved.</strong><br><br>' + 
+            'Token: ' + enrollment.accessToken + '<br><br>' + 
+            '<em>Check your downloads folder for teller-token.json</em>';
+
+          // Auto-download file
+          const data = JSON.stringify({ 
+            accessToken: enrollment.accessToken,
+            enrollmentId: enrollment.enrollment.id,
+            institution: enrollment.enrollment.institution.name
+          }, null, 2);
+          
+          const blob = new Blob([data], { type: 'application/json' });
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = 'teller-token.json';
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+        },
+        onExit: function() {
+          console.log('User closed Teller Connect');
+        }
+      });
+
+      document.getElementById('connect-teller').addEventListener('click', function() {
+        tellerConnect.open();
+      });
+    </script>
+  </body>
+</html>

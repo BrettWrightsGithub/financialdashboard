@@ -35,3 +35,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# n8n local data and certs
+docker/n8n/certs/
+docker/n8n/.n8n/

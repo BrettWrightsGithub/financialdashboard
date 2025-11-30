@@ -1,0 +1,696 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "accounts",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "provider_account_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.account_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "provider",
+              "fieldValue": "teller"
+            },
+            {
+              "fieldId": "provider_account_id",
+              "fieldValue": "={{ $('Loop Over Accounts1').item.json.id }}"
+            },
+            {
+              "fieldId": "name",
+              "fieldValue": "={{ $('Loop Over Accounts1').item.json.name }}"
+            },
+            {
+              "fieldId": "institution",
+              "fieldValue": "={{ $('Loop Over Accounts1').item.json.institution.name }}"
+            },
+            {
+              "fieldId": "account_type",
+              "fieldValue": "={{ $('Loop Over Accounts1').item.json.type }}"
+            },
+            {
+              "fieldId": "mask",
+              "fieldValue": "={{ $('Loop Over Accounts1').item.json.last_four }}"
+            },
+            {
+              "fieldId": "include_in_cashflow",
+              "fieldValue": "={{ true }}"
+            },
+            {
+              "fieldId": "is_active",
+              "fieldValue": "={{ $json.status === 'open' }}"
+            },
+            {
+              "fieldId": "balance_available",
+              "fieldValue": "={{ $('Teller account balance').item.json.available}}"
+            },
+            {
+              "fieldId": "balance_current",
+              "fieldValue": "={{ $('Teller account balance').item.json.ledger}}"
+            }
+          ]
+        }
+      },
+      "id": "e18f6eac-2cb6-46cb-a77a-06209a497206",
+      "name": "Supabase - Upsert Account1",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.links.balances }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "provideSslCertificates": true,
+        "options": {}
+      },
+      "id": "cff96d7e-e819-4fee-b4ce-bea597d79238",
+      "name": "Teller account balance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1120,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "# Transaction Categorizer \n\nGoal: Given a single transaction JSON plus some context, return a structured classification object used to populate the `transactions` table.\n\n---\n\n## Input\n\nThe service receives JSON like:\n\n'''\n{\n  \"description_raw\": \"Automatic Withdrawal, T-mobile Pcs Svc Web (r)\",\n  \"amount\": -402.15,\n  \"date\": \"2025-03-10\",\n  \"provider\": \"plaid\",\n  \"provider_type\": \"card_payment\",\n  \"account_name\": \"AFCU Checking\",\n  \"counterparty_name\": null,\n  \"notes\": \"\",\n  \"recent_similar_examples\": []\n}\n'''\n\nYou may also pass high-level hints (e.g., known Venmo usernames → tenants).\n\n---\n\n## Output Shape\n\nThe model should return **only** JSON in this format:\n\n'''\n{\n  \"category_name\": \"Phone\",\n  \"cashflow_group\": \"Fixed\",\n  \"flow_type\": \"Expense\",\n  \"is_transfer\": false,\n  \"is_pass_through\": true,\n  \"is_business\": false,\n  \"counterparty_type\": null,\n  \"notes\": \"T-Mobile full bill; mostly reimbursed by family\"\n}\n'''\n\nField definitions:\n\n- `category_name`: one of the entries in the `categories` table.\n- `cashflow_group`: one of: `Income`, `Fixed`, `Variable Essentials`, `Discretionary`, `Debt`, `Savings/Investing`, `Business`, `Transfer`, `Detractors`, `Other`.\n- `flow_type`: `Income`, `Expense`, or `Transfer`.\n- `is_transfer`: `true` if this is an internal money move that should not impact net cashflow.\n- `is_pass_through`: `true` if funds are primarily reimbursed or forwarded (e.g., T-Mobile reimbursements).\n- `is_business`: `true` for rental / Turo / business expenses or income.\n- `counterparty_type`: optional hint like `\"tenant\"`, `\"tmobile_family\"`, `\"other\"`, or `null`.\n- `notes`: short explanation for debugging.\n\n---\n\n## Rules\n\n1. **Income vs Expense vs Transfer**\n   - `Transfer` for internal moves:\n     - Checking → savings\n     - Venmo cashouts\n     - Transfers to Money Market or HSA when clearly labeled as such.\n   - Do **not** use `Transfer` for:\n     - Rent, loan payments, card payments, utilities, subscriptions, etc.\n   - Positive amounts into AFCU checking labelled “Payroll”, “Quickbooks Co: Barbara…” → `Paycheck`, `Income`.\n\n2. **Rent and Rental Income**\n   - Descriptions like:\n     - `Rent part 1 for March`\n     - `Rent part 2 for March`\n     - `January Rent`, `February Rent`, `March rent`, `Rent for January`\n     - Venmo from tenants with “rent” in the note\n   - → `category_name = \"Home Rental Income\"`, `cashflow_group = \"Income\"`, `flow_type = \"Income\"`.\n\n3. **T-Mobile**\n   - Bank debits with descriptions matching `T-mobile Pcs Svc` or similar:\n     - `category_name = \"Phone\"`\n     - `cashflow_group = \"Fixed\"`\n     - `flow_type = \"Expense\"`\n     - `is_pass_through = true` (because family reimburses most of it).\n   - Venmo inflows from known family usernames:\n     - Fife → `Jared-Fife-1`\n     - Worwood → `Daniel-Worwood`\n     - Carpenter → `Gary-Carpenter-4`\n     - Steck → `SteckDEV`\n     - → `category_name = \"Reimbursable\"` or `TMobile Reimbursement` (mapped in categories to `Business` or `Other`),\n       `is_pass_through = true`, `flow_type = \"Income\"`.\n\n4. **Groceries vs Restaurants vs Travel**\n   - `Smith's Food`, `Publix`, grocery chain descriptors → `Groceries` (`Variable Essentials`).\n   - `McDonald's`, `Chick-fil-a`, `New York Pizza`, `Smashburger`, `Doordash` food orders →\n     `Restaurants` (`Discretionary`).\n   - `Uber Eats` / food in another city / clearly trip-related → `Travel` or `Restaurants` depending on context.\n   - Travel-coded merchants like airport parking, hotels, Uber/Lyft on trips → `Travel` (`Discretionary`).\n\n5. **Car Rentals and Turo**\n   - `Turo x2901`, `Turo x6673` inflows → `Car Rental Income` (`Income`, `Primary Income` group in life_group).\n   - `Lyft`, `Uber`, `Quickquack` (car wash), parking, Masabi UTA, etc. connected to Turo expenses →\n     `Car Rental Expenses` or `Reimbursable` with `is_business = true`.\n\n6. **Debt and Loans**\n   - `Dept Education Student Ln`, `Student Loan Servicer` → `Loan Payment` (`Debt`).\n   - `Wells Fargo Autodraft`, `Automatic Loan Payment`, `Car Loan` → `Car Payment` (`Debt`).\n   - Mortgage descriptors like `Pnc Mtg Payment`, `Nsm Dbamr.cooper`, etc. → `Mortgage` (`Debt` or `Fixed`).\n\n7. **Subscriptions and Detractors**\n   - `Netflix`, `Spotify`, `Patreon`, `OpenAI`, `Codeium`, etc. → `Subscriptions` or `Work Projects` depending on label and context.\n   - Obvious “unneeded” or wasteful subs may be mapped to `Unneeded Subscriptions` (cashflow_group `Detractors`).\n\n8. **Transfers and Investment Moves**\n   - Descriptions like `Funds Transfer From Checking`, `Funds Transfer to Money Market`, `Deposit Ach Venm Type: Cashout Co: Venmo` →\n     `category_name = \"Transfer\"`, `cashflow_group = \"Transfer\"`, `flow_type = \"Transfer\"`, `is_transfer = true`.\n\n9. **Manual Overrides**\n   - If provided with override patterns in `OVERRIDES_JSON`, **respect those first** and never contradict them.\n   - When you see a transaction that matches an existing override pattern, use the overridden category and flags.\n\n---\n\n## Examples (from real data)\n\nUse these as **few-shot examples** in the prompt.\n\n1. Groceries\n\n'''\n{\n  \"input\": {\n    \"description_raw\": \"Smith's Food #4207\",\n    \"amount\": -124.30\n  },\n  \"output\": {\n    \"category_name\": \"Groceries\",\n    \"cashflow_group\": \"Variable Essentials\",\n    \"flow_type\": \"Expense\",\n    \"is_transfer\": false,\n    \"is_pass_through\": false,\n    \"is_business\": false,\n    \"counterparty_type\": null,\n    \"notes\": \"Grocery store\"\n  }\n}\n'''\n\n2. Venmo rent\n\n'''\n{\n  \"input\": {\n    \"description_raw\": \"Stephani Walker paid you $60.00\",\n    \"amount\": 60.0\n  },\n  \"output\": {\n    \"category_name\": \"Home Rental Income\",\n    \"cashflow_group\": \"Income\",\n    \"flow_type\": \"Income\",\n    \"is_transfer\": false,\n    \"is_pass_through\": false,\n    \"is_business\": true,\n    \"counterparty_type\": \"tenant\",\n    \"notes\": \"Partial rent payment from tenant\"\n  }\n}\n'''\n\n3. Venmo cashout\n\n'''\n{\n  \"input\": {\n    \"description_raw\": \"Deposit Ach Venm Type: Cashout Co: Venmo, Entry Class Code: Ppd\",\n    \"amount\": 1200.0\n  },\n  \"output\": {\n    \"category_name\": \"Transfer\",\n    \"cashflow_group\": \"Transfer\",\n    \"flow_type\": \"Transfer\",\n    \"is_transfer\": true,\n    \"is_pass_through\": false,\n    \"is_business\": false,\n    \"counterparty_type\": null,\n    \"notes\": \"Moving money from Venmo to bank, income already counted at Venmo level\"\n  }\n}\n'''\n\n",
+              "role": "model"
+            },
+            {
+              "content": "=Account Info:\n \"last_four\": \"{{ $('Loop Over Accounts1').item.json.last_four }}\",\n  \"subtype\": \"{{ $('Loop Over Accounts1').item.json.subtype }}\",\n  \"institution\": {\n    \"name\": \"{{ $('Loop Over Accounts1').item.json.institution.name }}\",\n    \"id\": \"{{ $('Loop Over Accounts1').item.json.institution.id }}\"\n  },\n  \"enrollment_id\": \"{{ $('Loop Over Accounts1').item.json.enrollment_id }}\",\n  \"currency\": \"{{ $('Loop Over Accounts1').item.json.currency }}\",\n  \"type\": \"{{ $('Loop Over Accounts1').item.json.type }}\",\n  \"status\": \"{{ $('Loop Over Accounts1').item.json.status }}\",\n  \"name\": \"{{ $('Loop Over Accounts1').item.json.name }}\",\n\nTransaction Info:\n  \"type\": \"{{ $json.type }}\",\n  \"status\": \"{{ $json.status }}\",\n  \"amount\": \"{{ $json.amount }}\",\n  \"details\": {\n    \"processing_status\": \"{{ $json.details.processing_status }}\",\n    \"counterparty\": \"{{ $json.details.counterparty }}\",\n    \"category\": \"{{ $json.details.category }}\"\n  },\n  \"description\": \"{{ $json.description }}\",\n  \"transaction_type\": \"{{ $json.type }}\",\n  \"transaction_status\": \"{{ $json.status }}\"\n"
+            }
+          ]
+        },
+        "simplify": false,
+        "jsonOutput": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        2096,
+        288
+      ],
+      "id": "6ed4742e-342c-480a-b3da-5ebe4b6491c1",
+      "name": "categorizeTransaction"
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = $input.all().map(i => ({\n  json: JSON.parse(i.json.candidates[0].content.parts[0].text)\n}));\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2448,
+        288
+      ],
+      "id": "b972e75e-6445-49e1-b61b-f5541104c32e",
+      "name": "parse"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ba107199-7917-4e48-8ced-88ff1148af36",
+              "leftValue": "={{ $json }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2784,
+        256
+      ],
+      "id": "6692178b-b0f5-4916-949a-c5be49e6def2",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "tableId": "transactions",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "date",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.date }}"
+            },
+            {
+              "fieldId": "description_raw",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.description }}"
+            },
+            {
+              "fieldId": "amount",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.normalizedAmount }}"
+            },
+            {
+              "fieldId": "provider_type",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.type }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.status }}"
+            },
+            {
+              "fieldId": "counterparty_name",
+              "fieldValue": "={{ \n  $('Loop Over Transactions1').item.json.details.counterparty \n    ? $('Loop Over Transactions1').item.json.details.counterparty.name \n    : $('Loop Over Accounts1').item.json.institution.id\n}}"
+            },
+            {
+              "fieldId": "category_ai",
+              "fieldValue": "={{ $('parse').item.json.category_name }}"
+            },
+            {
+              "fieldId": "provider",
+              "fieldValue": "teller"
+            },
+            {
+              "fieldId": "description_clean",
+              "fieldValue": "={{ $('parse').item.json.notes }}"
+            },
+            {
+              "fieldId": "is_transfer",
+              "fieldValue": "={{ $('parse').item.json.is_transfer }}"
+            },
+            {
+              "fieldId": "is_pass_through",
+              "fieldValue": "={{ $('parse').item.json.is_pass_through }}"
+            },
+            {
+              "fieldId": "is_business",
+              "fieldValue": "={{ $('parse').item.json.is_business }}"
+            },
+            {
+              "fieldId": "cashflow_group",
+              "fieldValue": "={{ $('parse').item.json.cashflow_group }}"
+            },
+            {
+              "fieldId": "provider_account_id",
+              "fieldValue": "={{ $('Loop Over Accounts1').item.json.id }}"
+            }
+          ]
+        }
+      },
+      "id": "20bb5345-a8e1-4eec-be3d-6b673c5f2f61",
+      "name": "createTransaction",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2976,
+        384
+      ],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "content": "Workflow 1: Teller Bank Sync (Chase & Other Banks)\nSyncs accounts and transactions from Teller-connected banks.\n\n#\tNode\tType\tPurpose\n1\tSchedule Trigger\tTrigger\tRuns daily (or on demand)\n2\tTeller – List Accounts\tHTTP Request\tGET /accounts with Teller API key\n3\tLoop Over Accounts\tSplit In Batches\tIterate each account\n4\tSupabase – Upsert Account\tSupabase\tInsert/update accounts table (provider='teller', map fields)\n5\tTeller – Get Transactions\tHTTP Request\tGET /accounts/{id}/transactions for each account\n6\tLoop Over Transactions\tSplit In Batches\tIterate each transaction\n7\tNormalize Amount\tCode / Set\tFlip sign if needed (Teller uses positive for debits)\n8\tAI Categorizer\tHTTP Request / OpenAI\tCall categorization endpoint (see Workflow 5)\n9\tSupabase – Upsert Transaction\tSupabase\tInsert/update transactions table, set provider='teller'",
+        "height": 336,
+        "width": 976
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -352,
+        -176
+      ],
+      "id": "c0bb53b3-920e-4856-ab65-1a2113ff4ac7",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 2
+            }
+          ]
+        }
+      },
+      "id": "2967e4b3-1b63-4c60-bd9e-c0f8170de600",
+      "name": "Schedule Trigger1",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        304,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "tellerApiUrl",
+              "value": "https://api.teller.io",
+              "type": "string"
+            },
+            {
+              "id": "id-3",
+              "name": "categorizerEndpoint",
+              "value": "<__PLACEHOLDER_VALUE__AI Categorization Endpoint URL__>",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "c7b05c3a-7b66-42f0-a379-d61c8fc6c7db",
+      "name": "Workflow Configuration1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        528,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Workflow Configuration1').first().json.tellerApiUrl }}/accounts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "provideSslCertificates": true,
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "d9b7e2db-0c2c-413e-a9e5-e11cc2ccd7ad",
+      "name": "Teller - List Accounts1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        752,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "4b9d4c69-d97c-4bab-9c26-08d47524f1fd",
+      "name": "Loop Over Accounts1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        976,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "tableId": "accounts",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "id",
+              "fieldValue": "={{ $json.id }}"
+            },
+            {
+              "fieldId": "name",
+              "fieldValue": "={{ $json.name }}"
+            },
+            {
+              "fieldId": "type",
+              "fieldValue": "={{ $json.type }}"
+            },
+            {
+              "fieldId": "subtype",
+              "fieldValue": "={{ $json.subtype }}"
+            },
+            {
+              "fieldId": "institution",
+              "fieldValue": "={{ $json.institution.name }}"
+            },
+            {
+              "fieldId": "currency",
+              "fieldValue": "={{ $json.currency }}"
+            },
+            {
+              "fieldId": "provider",
+              "fieldValue": "teller"
+            }
+          ]
+        }
+      },
+      "id": "487b6ab0-a3fb-4664-b7d6-6e6559525baa",
+      "name": "Supabase - Upsert Account2",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1248,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Workflow Configuration1').first().json.tellerApiUrl }}/accounts/{{ $('Teller account balance').item.json.account_id }}/transactions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "provideSslCertificates": true,
+        "options": {}
+      },
+      "id": "dffccb43-295a-4a71-81ac-563ccb2a9a2e",
+      "name": "Teller - Get Transactions1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1568,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "2f8d125a-3b25-4445-a5de-cd275396efaa",
+      "name": "Loop Over Transactions1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1648,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "normalizedAmount",
+              "value": "={{ Number($json.amount) }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "3646d5f3-9bba-4805-a93d-14af49e91c90",
+      "name": "Normalize Amount1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1872,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "transactions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "provider_transaction_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalize Amount1').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "account_id",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.account_id }}"
+            },
+            {
+              "fieldId": "date",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.date }}"
+            },
+            {
+              "fieldId": "description_raw",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.description }}"
+            },
+            {
+              "fieldId": "amount",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.normalizedAmount }}"
+            },
+            {
+              "fieldId": "provider_type",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.type }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "={{ $('Normalize Amount1').item.json.status }}"
+            },
+            {
+              "fieldId": "counterparty_name",
+              "fieldValue": "={{ \n  $('Loop Over Transactions1').item.json.details.counterparty \n    ? $('Loop Over Transactions1').item.json.details.counterparty.name \n    : $('Loop Over Accounts1').item.json.institution.id\n}}"
+            },
+            {
+              "fieldId": "category_ai",
+              "fieldValue": "={{ $json.category_name }}"
+            },
+            {
+              "fieldId": "provider",
+              "fieldValue": "teller"
+            },
+            {
+              "fieldId": "description_clean",
+              "fieldValue": "={{ $json.notes }}"
+            },
+            {
+              "fieldId": "is_transfer",
+              "fieldValue": "={{ $json.is_transfer }}"
+            },
+            {
+              "fieldId": "is_pass_through",
+              "fieldValue": "={{ $json.is_pass_through }}"
+            },
+            {
+              "fieldId": "is_business",
+              "fieldValue": "={{ $json.is_business }}"
+            },
+            {
+              "fieldId": "cashflow_group",
+              "fieldValue": "={{ $json.cashflow_group }}"
+            },
+            {
+              "fieldId": "provider_account_id",
+              "fieldValue": "={{ $('Loop Over Accounts1').item.json.id }}"
+            }
+          ]
+        }
+      },
+      "id": "3c987e98-5185-43eb-8d8d-6d62dace0c76",
+      "name": "Supabase - Upsert Transaction1",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2608,
+        272
+      ],
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Supabase - Upsert Account1": {
+      "main": [
+        [
+          {
+            "node": "Teller - Get Transactions1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Teller account balance": {
+      "main": [
+        [
+          {
+            "node": "Supabase - Upsert Account1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "categorizeTransaction": {
+      "main": [
+        [
+          {
+            "node": "parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parse": {
+      "main": [
+        [
+          {
+            "node": "Supabase - Upsert Transaction1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "createTransaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "createTransaction": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Transactions1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Workflow Configuration1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Configuration1": {
+      "main": [
+        [
+          {
+            "node": "Teller - List Accounts1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Teller - List Accounts1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Accounts1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Accounts1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Teller account balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Teller - Get Transactions1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Transactions1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Transactions1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Accounts1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Amount1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Amount1": {
+      "main": [
+        [
+          {
+            "node": "categorizeTransaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase - Upsert Transaction1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "6b8070f56758ed070d4025219f0915bbf80b51f4ff99cdfcfaafdbcdea2eb129"
+  }
+}

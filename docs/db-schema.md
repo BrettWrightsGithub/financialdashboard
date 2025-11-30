@@ -4,6 +4,28 @@ This file is the canonical reference for tables and fields. Keep it in sync with
 
 ---
 
+## Table: provider_connections
+
+Stores access tokens and connection metadata for Plaid/Teller integrations. One connection = one institution link.
+
+| Column              | Type        | Notes |
+|---------------------|------------|------|
+| id (pk)             | uuid       | Generated in Supabase. |
+| provider            | text       | `plaid`, `teller`. |
+| provider_item_id    | text       | Plaid `item_id` or Teller enrollment id. |
+| access_token        | text       | **SENSITIVE** — never expose to frontend. |
+| institution_id      | text       | e.g., `ins_3` (Plaid), `chase` (Teller). |
+| institution_name    | text       | e.g., `Chase`. |
+| status              | text       | `healthy`, `needs_reauth`, `error`. |
+| error_code          | text       | e.g., `ITEM_LOGIN_REQUIRED`. |
+| consent_expiration  | timestamptz| For Plaid connections with expiring consent. |
+| created_at          | timestamptz| default now(). |
+| updated_at          | timestamptz| default now(). |
+
+Unique constraint: `(provider, provider_item_id)`
+
+---
+
 ## Table: accounts
 
 Represents any financial account (bank, credit card, loan, property, Venmo balance, etc.).
@@ -11,6 +33,7 @@ Represents any financial account (bank, credit card, loan, property, Venmo balan
 | Column              | Type        | Notes |
 |---------------------|------------|------|
 | id (pk)             | uuid       | Generated in Supabase. |
+| connection_id       | uuid       | FK → provider_connections.id (nullable for manual accounts). |
 | provider            | text       | `teller`, `plaid`, `gmail_venmo`, `manual`, etc. |
 | provider_account_id | text       | External ID (e.g., Teller `acc_…`, Plaid `account_id`). |
 | name                | text       | Raw provider name. |

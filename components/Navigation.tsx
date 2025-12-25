@@ -7,6 +7,7 @@ const navItems = [
   { href: "/", label: "Dashboard" },
   { href: "/budget-planner", label: "Budget Planner" },
   { href: "/transactions", label: "Transactions" },
+  { href: "/admin", label: "Admin" },
 ];
 
 export function Navigation() {

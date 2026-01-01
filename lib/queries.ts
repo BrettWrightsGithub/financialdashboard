@@ -15,6 +15,12 @@ import type {
 // ============ Accounts ============
 
 export async function getAccounts(): Promise<Account[]> {
+  // Check if Supabase is configured
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty accounts");
+    return [];
+  }
+
   const { data, error } = await supabase
     .from("accounts")
     .select("*")
@@ -22,7 +28,10 @@ export async function getAccounts(): Promise<Account[]> {
     .order("name");
 
   if (error) {
-    console.error("Error fetching accounts:", error);
+    // Only log error if it's not a simple "table doesn't exist" error (common in dev)
+    if (!error.message.includes('relation') || !error.message.includes('does not exist')) {
+      console.error("Error fetching accounts:", error);
+    }
     return [];
   }
   return data || [];
@@ -31,6 +40,12 @@ export async function getAccounts(): Promise<Account[]> {
 // ============ Categories ============
 
 export async function getCategories(): Promise<Category[]> {
+  // Check if Supabase is configured
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty categories");
+    return [];
+  }
+
   const { data, error } = await supabase
     .from("categories")
     .select("*")
@@ -38,7 +53,10 @@ export async function getCategories(): Promise<Category[]> {
     .order("sort_order");
 
   if (error) {
-    console.error("Error fetching categories:", error);
+    // Only log error if it's not a simple "table doesn't exist" error (common in dev)
+    if (!error.message.includes('relation') || !error.message.includes('does not exist')) {
+      console.error("Error fetching categories:", error);
+    }
     return [];
   }
   return data || [];
@@ -54,6 +72,12 @@ export async function getTransactions(options?: {
   hideTransfers?: boolean;
   hidePassThrough?: boolean;
 }): Promise<TransactionWithDetails[]> {
+  // Check if Supabase is configured
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty transactions");
+    return [];
+  }
+
   let query = supabase
     .from("v_transactions_with_details")
     .select("*")
@@ -81,7 +105,10 @@ export async function getTransactions(options?: {
   const { data, error } = await query;
 
   if (error) {
-    console.error("Error fetching transactions:", error);
+    // Only log error if it's not a simple "table doesn't exist" error (common in dev)
+    if (!error.message.includes('relation') || !error.message.includes('does not exist')) {
+      console.error("Error fetching transactions:", error);
+    }
     return [];
   }
   return data || [];
@@ -91,6 +118,12 @@ export async function updateTransactionCategory(
   transactionId: string,
   categoryId: string
 ): Promise<boolean> {
+  // Check if Supabase is configured
+  if (!supabase) {
+    console.warn("Supabase not configured - cannot update transaction category");
+    return false;
+  }
+
   // Get category details to update denormalized fields
   const { data: category } = await supabase
     .from("categories")
@@ -118,6 +151,12 @@ export async function updateTransactionCategory(
 // ============ Budget Targets ============
 
 export async function getBudgetTargets(month: string): Promise<BudgetTarget[]> {
+  // Check if Supabase is configured
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty budget targets");
+    return [];
+  }
+
   // month format: YYYY-MM, need to convert to first day of month
   const monthDate = `${month}-01`;
 
@@ -137,7 +176,14 @@ export async function getBudgetSummary(month: string): Promise<{
   categories: Category[];
   targets: BudgetTarget[];
   actuals: { category_id: string; total: number }[];
+  actualsByCashflowGroup: { cashflow_group: string; total: number }[];
 }> {
+  // Check if Supabase is configured
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty budget summary");
+    return { categories: [], targets: [], actuals: [], actualsByCashflowGroup: [] };
+  }
+
   const monthDate = `${month}-01`;
   const startDate = monthDate;
   const endDate = new Date(
@@ -152,19 +198,27 @@ export async function getBudgetSummary(month: string): Promise<{
     supabase.from("budget_targets").select("*").eq("month", monthDate),
     supabase
       .from("transactions")
-      .select("life_category_id, amount")
+      .select("life_category_id, amount, cashflow_group")
       .gte("date", startDate)
       .lte("date", endDate)
       .eq("status", "posted")
       .eq("is_transfer", false),
   ]);
 
-  // Calculate actuals by category
+  // Calculate actuals by category (using life_category_id when available)
   const actualsByCategory: Record<string, number> = {};
+  // Also track actuals by cashflow_group for categories without direct transaction links
+  const actualsByCashflowGroup: Record<string, number> = {};
+  
   for (const t of transactionsRes.data || []) {
     if (t.life_category_id) {
       actualsByCategory[t.life_category_id] =
         (actualsByCategory[t.life_category_id] || 0) + Math.abs(t.amount);
+    }
+    // Also aggregate by cashflow_group for fallback matching
+    if (t.cashflow_group) {
+      actualsByCashflowGroup[t.cashflow_group] =
+        (actualsByCashflowGroup[t.cashflow_group] || 0) + Math.abs(t.amount);
     }
   }
 
@@ -172,17 +226,30 @@ export async function getBudgetSummary(month: string): Promise<{
     category_id,
     total,
   }));
+  
+  // Include cashflow_group actuals for categories that don't have direct transaction links
+  const actualsByCashflowGroupArray = Object.entries(actualsByCashflowGroup).map(([cashflow_group, total]) => ({
+    cashflow_group,
+    total,
+  }));
 
   return {
     categories: categoriesRes.data || [],
     targets: targetsRes.data || [],
     actuals,
+    actualsByCashflowGroup: actualsByCashflowGroupArray,
   };
 }
 
 // ============ Expected Inflows ============
 
 export async function getExpectedInflows(month: string): Promise<ExpectedInflow[]> {
+  // Check if Supabase is configured
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty expected inflows");
+    return [];
+  }
+
   const monthDate = `${month}-01`;
 
   const { data, error } = await supabase
@@ -192,7 +259,10 @@ export async function getExpectedInflows(month: string): Promise<ExpectedInflow[
     .order("expected_date");
 
   if (error) {
-    console.error("Error fetching expected inflows:", error);
+    // Only log error if it's not a simple "table doesn't exist" error (common in dev)
+    if (!error.message.includes('relation') || !error.message.includes('does not exist')) {
+      console.error("Error fetching expected inflows:", error);
+    }
     return [];
   }
   return data || [];
@@ -201,6 +271,23 @@ export async function getExpectedInflows(month: string): Promise<ExpectedInflow[
 // ============ Dashboard Aggregates ============
 
 export async function getDashboardData(month: string) {
+  // Check if Supabase is configured
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty dashboard data");
+    return {
+      accounts: [],
+      transactions: [],
+      budgetData: { categories: [], targets: [], actuals: [] },
+      expectedInflows: [],
+      cashflowSummary: {
+        totalIncome: 0,
+        totalExpenses: 0,
+        netCashflow: 0,
+        safeToSpend: 0,
+      },
+    };
+  }
+
   const monthDate = `${month}-01`;
   const [year, monthNum] = month.split("-").map(Number);
   const startDate = monthDate;

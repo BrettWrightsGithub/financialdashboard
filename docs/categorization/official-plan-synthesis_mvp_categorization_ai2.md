@@ -478,3 +478,56 @@ These requirements address data integrity, rule safety, and operational reliabil
 - **Author:** AI Synthesis (Cascade)
 - **Inputs:** ChatGPT, Gemini, Perplexity Deep Research Reports
 - **Purpose:** Enable MVP scope decisions for transaction categorization feature
+
+---
+
+## L) Technical Implementation Strategy (Hybrid Architecture)
+
+**Decision:** Use N8n for Orchestration (The Conductor) and Supabase Stored Procedures for Logic (The Engine).
+
+**Rationale:**
+- **Performance:** Backfilling 1,000 transactions requires microseconds in SQL versus minutes in N8n loops.
+- **Integrity:** "Undo" and "Audit Logging" require ACID transactions (all-or-nothing updates). Only the database can guarantee this; external API workflows cannot.
+
+---
+
+### 1. Division of Labor
+
+| Component | Responsibility | Tool |
+|-----------|----------------|------|
+| **The Conductor** | Listen for Webhooks, Fetch Raw JSON from Plaid, Insert into DB, Trigger SQL Functions, Send Slack Notifications. | N8n |
+| **The Engine** | Execute "Waterfall" Logic, Regex Matching, Payee Memory Lookups, Bulk Updates, Audit Log Insertion. | Supabase (PL/pgSQL) |
+
+---
+
+### 2. Required Stored Procedures (The "Engine")
+
+You must implement the following SQL functions to keep business logic close to the data:
+
+#### `fn_run_categorization_waterfall(batch_id UUID, transaction_ids UUID[])`
+
+- **Input:** A list of transaction IDs to process.
+- **Logic:**
+  1. Check `category_locked`. If `TRUE`, skip.
+  2. **Step 1 (Rules):** Run regex match against `categorization_rules` table. Update `category_id`, set `source='rule'`, set `applied_rule_id`.
+  3. **Step 2 (Memory):** For remaining items, match `description_clean` against `payee_memory`. Update `category_id`, set `source='payee_memory'`.
+  4. **Step 3 (Defaults):** For remaining, apply Plaid category if confidence > 0.8.
+- **Output:** Returns statistics (e.g., "50 processed, 12 rules applied").
+
+#### `fn_undo_batch(target_batch_id UUID)`
+
+- **Logic:** Reverts all transactions with this `batch_id` to their previous state (or resets them to "Uncategorized" to be re-run) and marks the Audit Log entries as "Reverted".
+
+#### `fn_handle_pending_handover()`
+
+- **Logic:** Triggered on insert. Checks for `pending_transaction_id` matches and copies category/notes from the pending record to the new posted record before deleting the old one.
+
+---
+
+### 3. N8n Workflow Definition
+
+1. **Trigger:** Webhook (Plaid `SYNC_UPDATES_AVAILABLE`).
+2. **Step 1:** Call Plaid `/transactions/sync` to fetch delta.
+3. **Step 2:** Upsert raw transactions to Supabase (map JSON to columns).
+4. **Step 3:** Execute SQL Node: `SELECT fn_run_categorization_waterfall(...)`.
+5. **Step 4:** Send summary notification (e.g., "Imported 12 txns, Auto-categorized 10").

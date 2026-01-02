@@ -3,6 +3,13 @@ description: Implement pending transaction ID tracking and cursor-based sync to 
 auto_execution_mode: 1
 ---
 
+## Testing Reference
+
+Follow `docs/testing/testing_strategy.md` for all testing requirements:
+- **Unit tests:** Pending→posted matching logic, category preservation
+- **Integration tests:** Stored procedure `fn_handle_pending_handover()` behavior
+- **E2E tests:** Simulate pending transaction, categorize it, verify category preserved when posted
+
 ## Architecture Note
 
 Per Section L of the MVP plan:
@@ -68,3 +75,9 @@ Per Section L of the MVP plan:
     - Removed transactions are handled gracefully (soft delete or archive).
 
 12. Document in `docs/sync/plaid_sync.md`.
+
+13. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to http://localhost:3000/transactions or dashboard
+    - Take a screenshot showing sync status indicator
+    - Test "Sync Now" button triggers sync
+    - Verify last sync time updates after sync completes

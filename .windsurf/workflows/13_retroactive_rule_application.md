@@ -3,6 +3,13 @@ description: Implement retroactive rule application with dry-run preview and und
 auto_execution_mode: 1
 ---
 
+## Testing Reference
+
+Follow `docs/testing/testing_strategy.md` for all testing requirements:
+- **Unit tests:** Dry-run preview logic, batch ID generation
+- **Integration tests:** `fn_undo_batch()` stored procedure, ACID guarantees
+- **E2E tests:** Apply rule retroactively, verify changes, undo, verify reverted
+
 ## Architecture Note
 
 Per Section L of the MVP plan:
@@ -74,3 +81,10 @@ Per Section L of the MVP plan:
     - ACID: partial failures roll back entirely.
 
 11. Document in `docs/categorization/retroactive_rules.md`.
+
+12. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to http://localhost:3000/admin/rules
+    - Take a screenshot of the "Apply to Past Transactions" modal
+    - Test preview functionality shows affected transactions
+    - Navigate to http://localhost:3000/admin/rules/batches
+    - Verify batch history displays correctly with undo buttons

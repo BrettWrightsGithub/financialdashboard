@@ -3,6 +3,13 @@ description: Implement bulk editing and review queue for uncategorized/low-confi
 auto_execution_mode: 1
 ---
 
+## Testing Reference
+
+Follow `docs/testing/testing_strategy.md` for all testing requirements:
+- **Unit tests:** `lib/categorization/reviewQueue.test.ts`
+- **Component tests:** Bulk selection checkboxes, bulk action dropdown
+- **E2E tests:** Select multiple transactions, apply bulk category, verify all updated
+
 ## Steps
 
 1. Re-read:
@@ -54,3 +61,10 @@ auto_execution_mode: 1
     - Bulk edit respects `category_locked` (skips locked transactions).
 
 11. Document in `docs/categorization/bulk_edit_review_queue.md`.
+
+12. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to http://localhost:3000/review-queue
+    - Take a screenshot of the review queue page
+    - Test bulk selection with checkboxes
+    - Test bulk category assignment
+    - Verify badge count in navbar updates correctly

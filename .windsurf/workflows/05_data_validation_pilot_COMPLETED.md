@@ -1,6 +1,34 @@
 ---
 description: Execute the data validation pilot (Phase 1 from categorization MVP) to measure Plaid accuracy and identify rule candidates before building categorization features.
 auto_execution_mode: 1
+status: COMPLETED
+completed_date: 2026-01-01
+---
+
+## Completion Summary
+
+**Done:** Created pilot infrastructure for data validation.
+
+- Created `scripts/export_pilot_transactions.ts` - exports 200 transactions with Plaid data
+- Created `scripts/generate_ground_truth.ts` - generates ground truth template for manual labeling
+- Created `scripts/analyze_plaid_accuracy.ts` - compares Plaid categories to ground truth
+- Created `scripts/simulate_rules.ts` - tests 10 draft rules against ground truth
+- Created `data/pilot_rules.json` - 10 draft programmatic rules
+- Created `docs/categorization/pilot_results.md` - results template
+- Updated n8n workflow to include Plaid category enrichment (`category_ai`, `category_ai_conf`)
+- Verified 100% Plaid category coverage on 200 transactions
+
+**Pending (User Task):** Manual ground truth labeling in `data/pilot_ground_truth.json`, then run `npm run pilot:analyze` and `npm run pilot:simulate`.
+
+**User Action Required:** Run the SQL migration in Supabase.
+
+## Testing Reference
+
+Follow `docs/testing/testing_strategy.md` for all testing requirements:
+- **Unit tests:** Accuracy calculation functions, rule simulation logic
+- **Integration tests:** Export script database queries
+- **Manual verification:** Ground truth labeling, accuracy analysis
+
 ---
 
 ## Steps
@@ -35,3 +63,8 @@ auto_execution_mode: 1
    - Go/No-Go recommendation for MVP build.
 
 8. **Success Threshold:** If Plaid + 10 rules achieves ≥80% accuracy, proceed with categorization feature build.
+
+9. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to any relevant UI pages
+    - Take screenshots to document the pilot results
+    - Verify data displays correctly in the app

@@ -3,6 +3,13 @@ description: Implement manual transaction splitting with parent-child model per 
 auto_execution_mode: 1
 ---
 
+## Testing Reference
+
+Follow `docs/testing/testing_strategy.md` for all testing requirements:
+- **Unit tests:** `lib/categorization/transactionSplitting.test.ts`
+- **Component tests:** Split modal form inputs, amount validation
+- **E2E tests:** Full split flow - open modal, add splits, verify children created
+
 ## Steps
 
 1. Re-read:
@@ -54,3 +61,10 @@ auto_execution_mode: 1
    - Cashflow correctly uses children, not parent.
 
 10. Document in `docs/categorization/transaction_splitting.md`.
+
+11. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to http://localhost:3000/transactions
+    - Take a screenshot of the split modal
+    - Test splitting a transaction into multiple categories
+    - Verify split children display indented under parent
+    - Test unsplit functionality

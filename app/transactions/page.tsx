@@ -16,6 +16,7 @@ export default function TransactionsPage() {
     cashflowGroup: null,
     hideTransfers: false,
     hidePassThrough: false,
+    searchQuery: "",
   });
 
   const [transactions, setTransactions] = useState<TransactionWithDetails[]>([]);
@@ -33,6 +34,7 @@ export default function TransactionsPage() {
         cashflowGroup: filters.cashflowGroup || undefined,
         hideTransfers: filters.hideTransfers,
         hidePassThrough: filters.hidePassThrough,
+        searchQuery: filters.searchQuery || undefined,
       });
       setTransactions(data);
     } catch (error) {

@@ -3,6 +3,13 @@ description: Implement audit logging and explainability badges for transaction c
 auto_execution_mode: 1
 ---
 
+## Testing Reference
+
+Follow `docs/testing/testing_strategy.md` for all testing requirements:
+- **Unit tests:** Audit log insertion, badge rendering logic
+- **Component tests:** CategorySourceBadge tooltip, audit history display
+- **E2E tests:** Change category, verify audit log entry created, verify badge updates
+
 ## Steps
 
 1. Re-read:
@@ -56,3 +63,10 @@ auto_execution_mode: 1
     - Badge displays correct source and tooltip info.
 
 12. Document in `docs/categorization/audit_log.md`.
+
+13. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to http://localhost:3000/transactions
+    - Take a screenshot showing CategorySourceBadge on transactions
+    - Click to open audit history modal and screenshot
+    - Navigate to http://localhost:3000/admin/audit-log
+    - Verify audit log filtering works correctly

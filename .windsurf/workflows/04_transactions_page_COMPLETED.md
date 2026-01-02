@@ -38,3 +38,10 @@ auto_execution_mode: 1
 8. Add loading states and error handling for Supabase queries.
 
 9. Test inline edits persist correctly and `category_locked` prevents future rule overwrites.
+
+10. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to http://localhost:3000/transactions
+    - Take a screenshot to verify the page renders correctly
+    - Test filter interactions (date range, account, search)
+    - Verify inline category editing works
+    - Confirm flag indicators display properly

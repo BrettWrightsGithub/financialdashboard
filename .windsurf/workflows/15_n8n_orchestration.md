@@ -3,6 +3,13 @@ description: Set up N8n workflows (The Conductor) for Plaid sync orchestration a
 auto_execution_mode: 1
 ---
 
+## Testing Reference
+
+Follow `docs/testing/testing_strategy.md` for all testing requirements:
+- **Integration tests:** Test n8n webhook endpoints, verify data flows to Supabase
+- **E2E tests:** Trigger sync, verify transactions appear in app with correct data
+- **Manual verification:** Test n8n workflow execution in n8n UI
+
 ## Architecture Context
 
 Per Section L of the MVP plan, N8n is "The Conductor" that:
@@ -147,3 +154,9 @@ Per Section L of the MVP plan, N8n is "The Conductor" that:
     - Verify `fn_run_categorization_waterfall` called with correct IDs.
 
 11. Document in `docs/n8n/plaid_sync_workflow.md`.
+
+12. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to http://localhost:3000 (dashboard)
+    - Take a screenshot showing sync status and last sync time
+    - Trigger manual sync and verify UI updates
+    - Navigate to transactions page and verify new transactions appear

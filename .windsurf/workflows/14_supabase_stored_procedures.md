@@ -3,6 +3,13 @@ description: Implement the Supabase stored procedures (The Engine) for categoriz
 auto_execution_mode: 1
 ---
 
+## Testing Reference
+
+Follow `docs/testing/testing_strategy.md` for all testing requirements:
+- **Integration tests:** Test each stored procedure with various inputs
+- **Unit tests:** Test TypeScript RPC wrapper functions
+- **E2E tests:** Verify procedures work correctly when called from the app
+
 ## Architecture Context
 
 Per Section L of the MVP plan, Supabase stored procedures are "The Engine" that executes:
@@ -253,3 +260,9 @@ Per Section L of the MVP plan, Supabase stored procedures are "The Engine" that 
     - `fn_handle_pending_handover`: verify categorization copied, pending deleted.
 
 11. Document in `docs/categorization/stored_procedures.md`.
+
+12. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to http://localhost:3000/transactions
+    - Take a screenshot after running categorization waterfall
+    - Verify transactions show updated categories and source badges
+    - Test undo functionality and verify categories revert

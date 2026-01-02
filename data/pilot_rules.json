@@ -1,0 +1,187 @@
+{
+  "_instructions": "Draft programmatic rules based on miscategorization patterns. Each rule has conditions and an action (target category). Rules are evaluated in priority order (highest first).",
+  "rules": [
+    {
+      "id": "rule_001",
+      "name": "Grocery Stores",
+      "description": "Common grocery store merchants",
+      "priority": 100,
+      "conditions": {
+        "merchant_contains": ["TRADER JOE", "WHOLE FOODS", "SAFEWAY", "KROGER", "PUBLIX", "ALDI", "COSTCO", "WALMART GROCERY", "TARGET GROCERY"],
+        "amount_min": null,
+        "amount_max": null,
+        "account_type": null,
+        "direction": "outflow"
+      },
+      "action": {
+        "target_category": "Groceries",
+        "is_transfer": false,
+        "is_pass_through": false
+      }
+    },
+    {
+      "id": "rule_002",
+      "name": "Coffee Shops",
+      "description": "Coffee shop transactions",
+      "priority": 95,
+      "conditions": {
+        "merchant_contains": ["STARBUCKS", "DUNKIN", "PEET'S", "BLUE BOTTLE", "PHILZ", "COFFEE"],
+        "amount_min": null,
+        "amount_max": 25,
+        "account_type": null,
+        "direction": "outflow"
+      },
+      "action": {
+        "target_category": "Coffee",
+        "is_transfer": false,
+        "is_pass_through": false
+      }
+    },
+    {
+      "id": "rule_003",
+      "name": "Gas Stations",
+      "description": "Fuel purchases",
+      "priority": 90,
+      "conditions": {
+        "merchant_contains": ["SHELL", "CHEVRON", "EXXON", "BP ", "MOBIL", "76 ", "ARCO", "COSTCO GAS", "SPEEDWAY"],
+        "amount_min": null,
+        "amount_max": null,
+        "account_type": null,
+        "direction": "outflow"
+      },
+      "action": {
+        "target_category": "Gas",
+        "is_transfer": false,
+        "is_pass_through": false
+      }
+    },
+    {
+      "id": "rule_004",
+      "name": "Streaming Subscriptions",
+      "description": "Common streaming services",
+      "priority": 85,
+      "conditions": {
+        "merchant_contains": ["NETFLIX", "SPOTIFY", "HULU", "DISNEY+", "HBO MAX", "APPLE TV", "AMAZON PRIME", "YOUTUBE PREMIUM"],
+        "amount_min": null,
+        "amount_max": 30,
+        "account_type": null,
+        "direction": "outflow"
+      },
+      "action": {
+        "target_category": "Subscriptions",
+        "is_transfer": false,
+        "is_pass_through": false
+      }
+    },
+    {
+      "id": "rule_005",
+      "name": "Venmo P2P Payments",
+      "description": "Venmo payments to external parties (not transfers)",
+      "priority": 80,
+      "conditions": {
+        "merchant_contains": ["VENMO"],
+        "amount_min": null,
+        "amount_max": null,
+        "account_type": null,
+        "direction": "outflow"
+      },
+      "action": {
+        "target_category": "Other",
+        "is_transfer": false,
+        "is_pass_through": false
+      },
+      "notes": "Default Venmo outflows to expense, not transfer. User can override."
+    },
+    {
+      "id": "rule_006",
+      "name": "Credit Card Payments",
+      "description": "Payments to credit card accounts",
+      "priority": 100,
+      "conditions": {
+        "merchant_contains": ["PAYMENT THANK YOU", "AUTOPAY", "CREDIT CARD PAYMENT", "CHASE CREDIT CRD"],
+        "amount_min": null,
+        "amount_max": null,
+        "account_type": "checking",
+        "direction": "outflow"
+      },
+      "action": {
+        "target_category": "Credit Card Payment",
+        "is_transfer": true,
+        "is_pass_through": false
+      }
+    },
+    {
+      "id": "rule_007",
+      "name": "Internal Transfers",
+      "description": "Transfers between own accounts",
+      "priority": 100,
+      "conditions": {
+        "merchant_contains": ["TRANSFER TO", "TRANSFER FROM", "ONLINE TRANSFER", "INTERNAL TRANSFER"],
+        "amount_min": null,
+        "amount_max": null,
+        "account_type": null,
+        "direction": null
+      },
+      "action": {
+        "target_category": "Transfer",
+        "is_transfer": true,
+        "is_pass_through": false
+      }
+    },
+    {
+      "id": "rule_008",
+      "name": "Restaurants",
+      "description": "Restaurant and dining transactions",
+      "priority": 75,
+      "conditions": {
+        "merchant_contains": ["DOORDASH", "UBER EATS", "GRUBHUB", "CHIPOTLE", "MCDONALD", "CHICK-FIL-A", "PANERA", "SUBWAY"],
+        "amount_min": null,
+        "amount_max": null,
+        "account_type": null,
+        "direction": "outflow"
+      },
+      "action": {
+        "target_category": "Restaurants",
+        "is_transfer": false,
+        "is_pass_through": false
+      }
+    },
+    {
+      "id": "rule_009",
+      "name": "Utilities",
+      "description": "Utility bill payments",
+      "priority": 85,
+      "conditions": {
+        "merchant_contains": ["ELECTRIC", "GAS COMPANY", "WATER UTILITY", "PG&E", "COMCAST", "XFINITY", "AT&T", "VERIZON", "T-MOBILE"],
+        "amount_min": null,
+        "amount_max": null,
+        "account_type": null,
+        "direction": "outflow"
+      },
+      "action": {
+        "target_category": "Utilities",
+        "is_transfer": false,
+        "is_pass_through": false
+      }
+    },
+    {
+      "id": "rule_010",
+      "name": "Amazon Shopping",
+      "description": "Amazon purchases (default to Shopping, may need splits)",
+      "priority": 70,
+      "conditions": {
+        "merchant_contains": ["AMAZON.COM", "AMZN MKTP", "AMAZON PRIME"],
+        "amount_min": null,
+        "amount_max": null,
+        "account_type": null,
+        "direction": "outflow"
+      },
+      "action": {
+        "target_category": "Shopping",
+        "is_transfer": false,
+        "is_pass_through": false
+      },
+      "notes": "Amazon often needs manual splitting for multi-category orders"
+    }
+  ]
+}

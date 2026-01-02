@@ -1,6 +1,33 @@
 ---
 description: Implement the programmatic rule engine for transaction categorization with priority ordering per `docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md` (FR-03, FR-04).
 auto_execution_mode: 1
+status: COMPLETED
+completed_date: 2026-01-01
+---
+
+## Completion Summary
+
+**Done:** Implemented the categorization rule engine with TypeScript wrappers and admin UI.
+
+- Added `CategorizationRule` and related types to `types/database.ts`
+- Created `lib/categorization/ruleEngine.ts` - TypeScript wrapper for stored procedures
+- Created `lib/categorization/applyRules.ts` - High-level categorization functions
+- Created `app/api/categorization/apply-rules/route.ts` - API for triggering categorization
+- Created `app/api/categorization/rules/route.ts` - CRUD API for rules management
+- Created `app/api/categories/route.ts` - Categories API for rule form dropdown
+- Created `app/admin/rules/page.tsx` - Admin UI for managing rules
+- Created `supabase/migrations/20260101_categorization_waterfall.sql` - Stored procedures
+- Created `docs/categorization/rule_engine.md` - Documentation
+
+**User Action Required:** Run the SQL migration in Supabase to create the stored procedures.
+
+## Testing Reference
+
+Follow `docs/testing/testing_strategy.md` for all testing requirements:
+- **Unit tests:** `lib/categorization/ruleEngine.test.ts` - rule matching logic
+- **Component tests:** RuleForm input retention, validation states
+- **E2E tests:** Create rule, edit rule, delete rule, verify persistence
+
 ---
 
 ## Architecture Note
@@ -59,3 +86,9 @@ Per Section L of the MVP plan, the rule engine logic lives in **Supabase stored 
    - Test the stored procedure returns correct statistics.
 
 9. Document the rule schema and usage in `docs/categorization/rule_engine.md`.
+
+10. **Puppeteer Verification:** Use the Puppeteer MCP server to:
+    - Navigate to http://localhost:3000/admin/rules
+    - Take a screenshot to verify the rules admin page renders
+    - Test adding/editing a rule
+    - Verify rule priority ordering displays correctly

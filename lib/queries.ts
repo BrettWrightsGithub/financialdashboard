@@ -71,6 +71,7 @@ export async function getTransactions(options?: {
   cashflowGroup?: string;
   hideTransfers?: boolean;
   hidePassThrough?: boolean;
+  searchQuery?: string;
 }): Promise<TransactionWithDetails[]> {
   // Check if Supabase is configured
   if (!supabase) {
@@ -100,6 +101,9 @@ export async function getTransactions(options?: {
   }
   if (options?.hidePassThrough) {
     query = query.eq("is_pass_through", false);
+  }
+  if (options?.searchQuery) {
+    query = query.ilike("description_raw", `%${options.searchQuery}%`);
   }
 
   const { data, error } = await query;
@@ -143,6 +147,34 @@ export async function updateTransactionCategory(
 
   if (error) {
     console.error("Error updating transaction:", error);
+    return false;
+  }
+  return true;
+}
+
+export async function updateTransactionFlags(
+  transactionId: string,
+  flags: {
+    is_transfer?: boolean;
+    is_pass_through?: boolean;
+    is_business?: boolean;
+  }
+): Promise<boolean> {
+  if (!supabase) {
+    console.warn("Supabase not configured - cannot update transaction flags");
+    return false;
+  }
+
+  const { error } = await supabase
+    .from("transactions")
+    .update({
+      ...flags,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", transactionId);
+
+  if (error) {
+    console.error("Error updating transaction flags:", error);
     return false;
   }
   return true;

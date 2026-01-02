@@ -15,10 +15,7 @@
       "name": "Schedule Every 6-12 Hours",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
-      "position": [
-        -608,
-        1536
-      ]
+      "position": [-608, 1536]
     },
     {
       "parameters": {
@@ -63,10 +60,7 @@
       "name": "Workflow Configuration",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [
-        -160,
-        1536
-      ]
+      "position": [-160, 1536]
     },
     {
       "parameters": {
@@ -75,10 +69,7 @@
       },
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [
-        -384,
-        1536
-      ],
+      "position": [-384, 1536],
       "id": "96f30629-7057-4285-ba6d-72a8662dfc41",
       "name": "getProviderData5",
       "credentials": {
@@ -97,10 +88,7 @@
       },
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
-      "position": [
-        512,
-        1536
-      ],
+      "position": [512, 1536],
       "id": "971ff802-2f94-4922-af4d-3c44952701cd",
       "name": "Split Transactions Test1",
       "alwaysOutputData": true
@@ -112,9 +100,7 @@
         "sendBody": true,
         "specifyBody": "=json",
         "bodyParameters": {
-          "parameters": [
-            {}
-          ]
+          "parameters": [{}]
         },
         "jsonBody": "={\n  \"client_id\": \"{{ $json.plaidClientId }}\",\n  \"secret\": \"{{ $json.plaidSecret }}\",\n  \"access_token\": \"{{ $json.plaidAccessToken }}\",\n  \"cursor\": \"\",\n  \"count\": 200\n}",
         "options": {
@@ -156,10 +142,7 @@
       "name": "accounts-Transactions",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
-      "position": [
-        288,
-        1536
-      ],
+      "position": [288, 1536],
       "alwaysOutputData": false
     },
     {
@@ -168,23 +151,17 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        736,
-        1536
-      ],
+      "position": [736, 1536],
       "id": "2ed330c2-7eea-46d0-9a22-d6fc418f302e",
       "name": "transformAccounts"
     },
     {
       "parameters": {
-        "jsCode": "// transactionTransform (Run Once for All Items)\n// Current input: Supabase upsert response rows for accounts (each item has id + provider_account_id)\n// We also pull Plaid transactions from node: \"accounts-Transactions\"\n\nconst PLAID_NODE = 'accounts-Transactions';\n\n// 1) Build lookup: Plaid account_id -> Supabase accounts.id (uuid)\nconst accountRows = $input.all().map(i => i.json).filter(Boolean);\n\nconst accountLookup = new Map(\n  accountRows\n    .filter(r => r.provider_account_id && r.id)\n    .map(r => [r.provider_account_id, r.id])\n);\n\n// 2) Pull all Plaid \"added\" transactions from accounts-Transactions\nconst plaidItems = $items(PLAID_NODE);\n\nconst added = plaidItems\n  .flatMap(i => i.json.body?.added ?? [])\n  .filter(Boolean);\n\n// 3) Transform to public.transactions schema\nconst seen = new Set();\n\nconst transactionsToUpsert = added\n  .map(t => {\n    const provider = 'plaid';\n\n    const provider_account_id = t.account_id ?? null;  // Plaid account id\n    const account_id = provider_account_id ? accountLookup.get(provider_account_id) : null;\n\n    const provider_transaction_id = t.transaction_id ?? null;\n    const date = t.date ?? t.authorized_date ?? null; // YYYY-MM-DD\n    const amount = (typeof t.amount === 'number') ? t.amount : Number(t.amount);\n\n    const counterparty_name =\n      t.merchant_name ??\n      t.counterparties?.[0]?.name ??\n      null;\n\n    const description_raw =\n      t.original_description ??\n      t.name ??\n      counterparty_name ??\n      null;\n\n    const description_clean =\n      t.name ??\n      counterparty_name ??\n      null;\n\n    const status = (t.pending === true) ? 'pending' : 'posted';\n\n    // required fields\n    if (!provider_transaction_id || !account_id || !date || Number.isNaN(amount)) return null;\n\n    // dedupe\n    const k = `${provider}:${provider_transaction_id}`;\n    if (seen.has(k)) return null;\n    seen.add(k);\n\n    return {\n      provider,\n      provider_transaction_id,\n      account_id,               // REQUIRED FK uuid\n      provider_account_id,      // optional\n      date,                     // REQUIRED\n      amount,                   // REQUIRED\n      description_raw,\n      description_clean,\n      counterparty_name,\n      provider_type: t.payment_channel ?? null,\n      status,\n      processing_status: 'complete',\n      updated_at: new Date().toISOString(),\n    };\n  })\n  .filter(Boolean);\n\nreturn [{\n  json: {\n    transactionsToUpsert,\n    count: transactionsToUpsert.length,\n  }\n}];\n"
+        "jsCode": "// transactionTransform (Run Once for All Items)\n// Current input: Supabase upsert response rows for accounts (each item has id + provider_account_id)\n// We also pull Plaid transactions from node: \"accounts-Transactions\"\n\nconst PLAID_NODE = 'accounts-Transactions';\n\n// 1) Build lookup: Plaid account_id -> Supabase accounts.id (uuid)\nconst accountRows = $input.all().map(i => i.json).filter(Boolean);\n\nconst accountLookup = new Map(\n  accountRows\n    .filter(r => r.provider_account_id && r.id)\n    .map(r => [r.provider_account_id, r.id])\n);\n\n// 2) Pull all Plaid \"added\" transactions from accounts-Transactions\nconst plaidItems = $items(PLAID_NODE);\n\nconst added = plaidItems\n  .flatMap(i => i.json.body?.added ?? [])\n  .filter(Boolean);\n\n// 3) Transform to public.transactions schema\nconst seen = new Set();\n\nconst transactionsToUpsert = added\n  .map(t => {\n    const provider = 'plaid';\n\n    const provider_account_id = t.account_id ?? null;  // Plaid account id\n    const account_id = provider_account_id ? accountLookup.get(provider_account_id) : null;\n\n    const provider_transaction_id = t.transaction_id ?? null;\n    const date = t.date ?? t.authorized_date ?? null; // YYYY-MM-DD\n    \n    // CRITICAL FIX: Negate Plaid amount to convert to standard convention\n    // Plaid: positive = money out (expenses), negative = money in (income)\n    // Standard: positive = money in (income), negative = money out (expenses)\n    const amount = (typeof t.amount === 'number') ? -t.amount : -Number(t.amount);\n\n    const counterparty_name =\n      t.merchant_name ??\n      t.counterparties?.[0]?.name ??\n      null;\n\n    const description_raw =\n      t.original_description ??\n      t.name ??\n      counterparty_name ??\n      null;\n\n    const description_clean =\n      t.name ??\n      counterparty_name ??\n      null;\n\n    const status = (t.pending === true) ? 'pending' : 'posted';\n\n    // --- PLAID CATEGORY ENRICHMENT ---\n    // Extract category from Plaid's personal_finance_category (preferred) or legacy category array\n    const category_ai = \n      t.personal_finance_category?.detailed ??\n      t.personal_finance_category?.primary ??\n      (Array.isArray(t.category) ? t.category.join(' > ') : null);\n\n    // Map Plaid confidence levels to numeric scores (0-100)\n    const confidenceMap = {\n      'VERY_HIGH': 95,\n      'HIGH': 85,\n      'MEDIUM': 70,\n      'LOW': 50\n    };\n    const category_ai_conf = \n      confidenceMap[t.personal_finance_category?.confidence_level] ?? \n      (Array.isArray(t.category) ? 60 : null); // Default 60 for legacy categories\n\n    // required fields\n    if (!provider_transaction_id || !account_id || !date || Number.isNaN(amount)) return null;\n\n    // dedupe\n    const k = `${provider}:${provider_transaction_id}`;\n    if (seen.has(k)) return null;\n    seen.add(k);\n\n    return {\n      provider,\n      provider_transaction_id,\n      account_id,               // REQUIRED FK uuid\n      provider_account_id,      // optional\n      date,                     // REQUIRED\n      amount,                   // REQUIRED - NOW NEGATED\n      description_raw,\n      description_clean,\n      counterparty_name,\n      provider_type: t.payment_channel ?? null,\n      status,\n      processing_status: 'complete',\n      category_ai,              // Plaid category suggestion\n      category_ai_conf,         // Plaid confidence (0-100)\n      updated_at: new Date().toISOString(),\n    };\n  })\n  .filter(Boolean);\n\nreturn [{\n  json: {\n    transactionsToUpsert,\n    count: transactionsToUpsert.length,\n  }\n}];\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1184,
-        1536
-      ],
+      "position": [1184, 1536],
       "id": "974e4f31-9253-4b5b-95cc-286c00b87d2a",
       "name": "transactionTransform"
     },
@@ -231,10 +208,7 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
-      "position": [
-        960,
-        1536
-      ],
+      "position": [960, 1536],
       "id": "e66976ae-52ab-498b-9aa4-d87706d51e60",
       "name": "supabaseUpsertAccounts",
       "credentials": {
@@ -283,10 +257,7 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
-      "position": [
-        1408,
-        1608
-      ],
+      "position": [1408, 1608],
       "id": "c6e1fa12-6194-4008-9c10-ca3e339cafd7",
       "name": "supabase_transactionsUpsert",
       "credentials": {
@@ -302,10 +273,7 @@
       },
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [
-        64,
-        1536
-      ],
+      "position": [64, 1536],
       "id": "69194eb8-82f4-457e-8d11-5d607735f2a2",
       "name": "Loop Over Items"
     },
@@ -316,10 +284,7 @@
       },
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
-      "position": [
-        288,
-        1344
-      ],
+      "position": [288, 1344],
       "id": "2c2233aa-1487-4f15-ab38-d4d418e27295",
       "name": "logOutput"
     }

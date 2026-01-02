@@ -58,6 +58,39 @@ Key boolean flags per transaction:
 
 These drive filtering and cashflow logic.
 
+### 4. Categorization Strategy (MVP)
+
+The transaction categorization system uses a layered approach to achieve **80%+ auto-categorization** with **<5 min/week** of user correction time.
+
+#### Categorization Layers (in precedence order)
+
+1. **User Override (highest priority)** — Manual categorizations always win and persist. Locked via `category_locked = TRUE`.
+2. **Programmatic Rules** — User-defined rules match on merchant name, amount range, account type. Priority-ordered; top rule wins.
+3. **Payee Memory** — After first manual categorization, same payee auto-assigns that category.
+4. **Plaid Baseline** — Provides 75-85% instant categorization from bank data enrichment.
+
+#### MVP Features
+
+| Feature | Purpose |
+|---------|---------|
+| **Transfer detection** | Auto-flag same-owner account moves; distinguish internal transfers from P2P payments (Venmo/Zelle to external parties = expense) |
+| **Reimbursement handling** | Link reimbursement to original expense; nets in same category |
+| **Manual split** | Parent-child model for multi-category purchases (Amazon, Costco) |
+| **Bulk editing** | Multi-select transactions, assign single category |
+| **Source indicator** | Show "Plaid", "Rule: [name]", or "Manual" for each transaction |
+| **Review queue** | Surface uncategorized or low-confidence transactions |
+| **Audit log** | Track changes with timestamp, source, previous value |
+
+#### Deferred to Phase 2+
+
+- Custom ML model (XGBoost/LightGBM) — needs transaction history
+- LLM + RAG for edge cases — cost/latency concerns
+- Auto rule suggestions after repeated corrections
+- Amazon/receipt itemization via browser extension
+- Drift detection for stale rules
+
+See `docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md` for full requirements and validation plan.
+
 ---
 
 ## Cashflow and Safe-to-Spend Logic

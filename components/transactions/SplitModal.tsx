@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { formatCurrencyPrecise } from "@/lib/cashflow";
 import type { Category, TransactionWithDetails, SplitInput } from "@/types/database";
+import { GroupedCategorySelect } from "./GroupedCategorySelect";
 
 interface SplitModalProps {
   transaction: TransactionWithDetails;
@@ -103,12 +104,22 @@ export function SplitModal({
         }),
       });
 
-      const data = await res.json();
+      // Handle response safely - check for empty body
+      const text = await res.text();
+      let data;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: "Invalid response from server" };
+      }
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to split transaction");
       }
 
+      // Small delay to ensure database view is updated before refetch
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
       onSplitComplete();
       onClose();
     } catch (err) {
@@ -199,20 +210,15 @@ export function SplitModal({
                   <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
                     Category
                   </label>
-                  <select
+                  <GroupedCategorySelect
+                    categories={categories}
                     value={split.category_id}
-                    onChange={(e) =>
-                      handleSplitChange(split.id, "category_id", e.target.value)
+                    onChange={(value) =>
+                      handleSplitChange(split.id, "category_id", value)
                     }
+                    placeholder="Select category"
                     className="select text-sm py-1.5 w-full"
-                  >
-                    <option value="">Select category</option>
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               </div>
 

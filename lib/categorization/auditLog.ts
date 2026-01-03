@@ -54,24 +54,28 @@ export async function logCategoryChange(
 ): Promise<{ success: boolean; logId?: string; error?: string }> {
   const supabase = createServerSupabaseClient();
 
-  const { data, error } = await supabase.rpc("fn_log_category_change", {
-    p_transaction_id: params.transactionId,
-    p_previous_category_id: params.previousCategoryId,
-    p_new_category_id: params.newCategoryId,
-    p_change_source: params.source,
-    p_rule_id: params.ruleId || null,
-    p_confidence_score: params.confidence || null,
-    p_changed_by: params.changedBy || "system",
-    p_batch_id: params.batchId || null,
-    p_notes: params.notes || null,
-  });
+  const { data, error } = await supabase
+    .from("category_audit_log")
+    .insert({
+      transaction_id: params.transactionId,
+      previous_category_id: params.previousCategoryId,
+      new_category_id: params.newCategoryId,
+      change_source: params.source,
+      rule_id: params.ruleId || null,
+      confidence_score: params.confidence || null,
+      changed_by: params.changedBy || "system",
+      batch_id: params.batchId || null,
+      notes: params.notes || null,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     console.error("Error logging category change:", error);
     return { success: false, error: error.message };
   }
 
-  return { success: true, logId: data };
+  return { success: true, logId: data?.id };
 }
 
 /**

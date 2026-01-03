@@ -13,6 +13,11 @@ A personal finance “command center” that aggregates bank accounts, credit ca
 - **Unified transaction ledger**
   - Normalized `accounts` and `transactions` tables in Supabase.
   - Data comes from Teller, Plaid (AFCU), and Gmail (Venmo) via n8n.
+- **Categorization Engine (MVP)**
+  - **Rules Engine:** Programmatic categorization based on merchant, amount, etc.
+  - **Payee Memory:** Learns from user overrides automatically.
+  - **Review Queue:** Dedicated workflow for low-confidence/uncategorized items.
+  - **Audit Trail:** Full "explainability" for why a transaction was categorized a certain way.
 - **Budget Planner**
   - “Expected” values per category (income, fixed, essentials, discretionary, debt, savings).
   - “Actual” values calculated from real transactions.
@@ -25,6 +30,7 @@ A personal finance “command center” that aggregates bank accounts, credit ca
 - **Master Transaction Sheet**
   - Filter by date, account, cashflow group, and flags (Transfer, Pass-Through, Business).
   - Inline category edits with manual override tracking.
+  - Split transaction support for multi-category purchases.
 
 ---
 
@@ -46,6 +52,8 @@ A personal finance “command center” that aggregates bank accounts, credit ca
   - counterparties
   - expected_inflows
   - category_overrides
+  - categorization_rules (NEW)
+  - audit_logs (NEW)
 
 **Automations (outside this repo)**
 
@@ -53,12 +61,16 @@ A personal finance “command center” that aggregates bank accounts, credit ca
   - Teller (non-AFCU accounts)
   - Plaid (AFCU checking)
   - Gmail (Venmo “paid you” emails)
-- n8n writes normalized rows into Supabase and calls an AI categorization service.
+- n8n writes normalized rows into Supabase.
 
-**AI**
+**Categorization Logic**
 
-- A separate micro-service (or n8n sub-workflow) categorizes transactions using the prompt spec in docs/ai/transaction_categorizer_v1.md.
-- The web app consumes the results; it does not contain the prompt logic directly.
+- **Hybrid approach:**
+  1. **User Overrides:** Explicit manual choices (Highest priority).
+  2. **Rules Engine:** Deterministic logic stored in Supabase.
+  3. **Payee Memory:** Heuristic matching based on past behavior.
+  4. **Plaid/Provider:** Fallback to bank-provided category.
+- Logic is implemented via Supabase Stored Procedures for performance and consistency.
 
 ---
 
@@ -67,18 +79,14 @@ A personal finance “command center” that aggregates bank accounts, credit ca
 1. **Ingestion (n8n)**
    - Teller and Plaid are polled on a schedule to sync accounts and transactions.
    - Gmail node pulls Venmo emails with the label "venmo-payment" and parses payer, amount, and notes.
-   - All raw events become rows in Supabase:
-     - accounts
-     - transactions (provider, provider_transaction_id, account_id, amount, date, description_raw, etc.).
+   - All raw events become rows in Supabase.
 
-2. **Categorization (AI service)**
-   - For each new transaction, AI returns:
-     - category_name
-     - cashflow_group
-     - flow_type
-     - flags: is_transfer, is_pass_through, is_business
-   - Results are stored on the transaction row.
-   - Manual overrides in the UI set category_locked and create category_overrides rows for learning.
+2. **Categorization (Waterfall)**
+   - New transactions flow through the categorization engine:
+     - Checked against existing overrides.
+     - Checked against active rules (priority ordered).
+     - Checked against payee memory.
+   - Results are stored with full provenance (`categorization_method`, `rule_id`, etc.).
 
 3. **Application (Next.js)**
    - Reads from Supabase (with appropriate RLS).
@@ -86,13 +94,13 @@ A personal finance “command center” that aggregates bank accounts, credit ca
      - Monthly net cashflow
      - Weekly Safe-to-Spend
      - Expected inflows not yet received
-   - Renders Dashboard, Budget Planner, and Transactions views.
+   - Renders Dashboard, Budget Planner, Transactions, and Review Queue views.
 
 For domain details (groups, flags, and formulas), see:
 
 - docs/financial-command-center-overview.md
 - docs/db-schema.md
-- docs/ai/transaction_categorizer_v1.md
+- docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md
 
 ---
 
@@ -132,7 +140,23 @@ For domain details (groups, flags, and formulas), see:
 - Inline editing:
   - Category dropdown.
   - Flag checkboxes.
-  - Writes changes back to Supabase and logs category_overrides.
+  - Split transaction modal.
+
+### 4. Review Queue (NEW)
+
+- Dedicated view for:
+  - Uncategorized transactions.
+  - Low-confidence categorizations.
+- Features:
+  - Bulk multi-select editing.
+  - "Quick accept" actions.
+  - Explainability badges (why was this categorized this way?).
+
+### 5. Rules Management (NEW)
+
+- Admin interface for creating and managing categorization rules.
+- Drag-and-drop priority ordering.
+- "Dry run" testing against historical data.
 
 ---
 
@@ -178,10 +202,10 @@ This repo is designed to play nicely with Windsurf and Cascade.
      - README.md
      - docs/financial-command-center-overview.md
      - docs/db-schema.md
-     - docs/ai/transaction_categorizer_v1.md
+     - docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md
 
 2. **Use workflows**
-   - There are guiding files under .windsurf/workflows (for example, 01_bootstrap_app.md, 02_budget_planner_page.md).
+   - There are guiding files under .windsurf/workflows (e.g., `06_categorization_rule_engine_COMPLETED.md`).
    - Ask Cascade to follow a specific workflow when implementing or modifying features.
 
 3. **Small, explicit tasks**
@@ -197,13 +221,23 @@ This repo is designed to play nicely with Windsurf and Cascade.
 
 ---
 
-## Roadmap (Short)
+## Roadmap
 
-- [ ] Implement basic data fetching from Supabase for transactions and categories.
-- [ ] Build Transactions table with filters and category editing.
-- [ ] Implement Budget Planner view with Expected vs Actual per category.
-- [ ] Implement Dashboard Safe-to-Spend and cashflow cards.
-- [ ] Wire in expected_inflows and outstanding income logic.
-- [ ] Add simple unit tests for cashflow and Safe-to-Spend helpers in lib/cashflow.
+**Completed (MVP Phase 1 & 2)**
+- [x] Implement basic data fetching from Supabase for transactions and categories.
+- [x] Build Transactions table with filters and category editing.
+- [x] Implement Budget Planner view with Expected vs Actual per category.
+- [x] Implement Dashboard Safe-to-Spend and cashflow cards.
+- [x] Wire in expected_inflows and outstanding income logic.
+- [x] **Categorization Engine:** Rules, Payee Memory, and Waterfall logic.
+- [x] **Review Queue UI:** Bulk edit and explainability.
+- [x] **Rules Management UI:** Priority ordering and retroactive application.
+- [x] **Split Transactions:** Parent-child transaction support.
+
+**Next Steps**
+- [ ] Connect N8n workflows for live data ingestion.
+- [ ] End-to-end testing with live banking data.
+- [ ] Mobile responsiveness improvements.
+
 
 This README should be enough context for Windsurf (and future you) to understand what the project is trying to do and how the pieces fit together.

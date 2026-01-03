@@ -8,11 +8,31 @@ This directory contains Windsurf-specific configuration for the Financial Comman
 
 Numbered workflows for building features in order:
 
-1. **01_bootstrap_app.md** - Initial Next.js setup, Supabase connection, basic layout
-2. **02_budget_planner_page.md** - Budget Planner UI and logic
-3. **03_categorization_mvp_foundation.md** - Core categorization engine, transfer detection, audit logging
-4. **04_categorization_ui_review_queue.md** - Review queue UI, bulk editing, explainability
-5. **05_categorization_rules_engine.md** - Rules management, priority ordering, retroactive application
+**Foundation & Core Pages**
+1. **01_bootstrap_app_COMPLETED.md** - Initial Next.js setup, Supabase connection
+2. **02_budget_planner_page_COMPLETED.md** - Budget Planner UI and logic
+3. **03_dashboard_page_COMPLETED.md** - Dashboard widgets & cashflow
+4. **04_transactions_page_COMPLETED.md** - Transactions list & filters
+
+**Categorization MVP Implementation (Completed)**
+5. **05_data_validation_pilot_COMPLETED.md** - Data validation & rules testing
+6. **06_categorization_rule_engine_COMPLETED.md** - Core rules engine logic
+7. **07_user_override_payee_memory_COMPLETED.md** - User overrides & payee memory
+8. **08_transfer_reimbursement_handling_COMPLETED.md** - Transfers & reimbursements
+9. **09_transaction_splitting_COMPLETED.md** - Split transactions support
+10. **10_bulk_edit_review_queue_COMPLETED.md** - Bulk edit & review queue UI
+11. **11_audit_log_explainability_COMPLETED.md** - Audit logging & explainability
+12. **12_pending_transaction_sync_COMPLETED.md** - Pending transaction sync
+13. **13_retroactive_rule_application_COMPLETED.md** - Retroactive rules & undo
+14. **14_supabase_stored_procedures_COMPLETED.md** - Stored procedures (The Engine)
+
+**Categorization Planning (Reference)**
+- *03_categorization_mvp_foundation.md* - Original engine plan
+- *04_categorization_ui_review_queue.md* - Original UI plan
+- *05_categorization_rules_engine.md* - Original rules plan
+
+**Next Steps**
+15. **15_n8n_orchestration.md** - N8n automation setup
 
 **When to use workflows:**
 - Implementing new features or pages

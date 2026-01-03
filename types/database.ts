@@ -249,12 +249,37 @@ export interface CategorizationRuleWithCategory extends CategorizationRule {
 
 // Result from categorization waterfall
 export interface WaterfallResult {
+  batch_id?: string;
   processed: number;
   rules_applied: number;
   memory_applied: number;
   plaid_applied: number;
   skipped_locked: number;
   uncategorized: number;
+}
+
+// Result from undo batch operation
+export interface UndoBatchResult {
+  success: boolean;
+  batch_id?: string;
+  reverted?: number;
+  skipped_locked?: number;
+  already_reverted?: number;
+  error?: string;
+}
+
+// Categorization statistics
+export interface CategorizationStats {
+  date_range: {
+    start: string;
+    end: string;
+  };
+  total: number;
+  categorized: number;
+  uncategorized: number;
+  locked: number;
+  by_source: Record<string, number>;
+  categorization_rate: number;
 }
 
 // Category source types

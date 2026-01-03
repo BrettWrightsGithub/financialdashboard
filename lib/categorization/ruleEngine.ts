@@ -10,7 +10,9 @@ import type {
   CategorizationRule, 
   CategorizationRuleWithCategory,
   Transaction,
-  WaterfallResult 
+  WaterfallResult,
+  UndoBatchResult,
+  CategorizationStats
 } from "@/types/database";
 
 // Rule match result for UI preview
@@ -23,12 +25,36 @@ export interface RuleMatch {
 /**
  * Trigger the categorization waterfall stored procedure for a batch of transactions.
  * This is the main entry point for categorizing transactions.
+ * 
+ * @param transactionIds - Array of transaction UUIDs to categorize
+ * @param batchId - Optional batch ID for grouping (requires enhanced stored procedure)
+ * 
+ * Note: If batch_id is provided but the enhanced stored procedure isn't deployed yet,
+ * it will fall back to the basic version that only takes transaction IDs.
  */
 export async function triggerCategorizationWaterfall(
-  transactionIds: string[]
+  transactionIds: string[],
+  batchId?: string
 ): Promise<WaterfallResult> {
   const supabase = createServerSupabaseClient();
 
+  // Try enhanced version with batch_id first
+  if (batchId) {
+    const { data, error } = await supabase.rpc("fn_run_categorization_waterfall", {
+      p_batch_id: batchId,
+      p_transaction_ids: transactionIds,
+    });
+
+    // If enhanced version works, return result
+    if (!error) {
+      return data as WaterfallResult;
+    }
+
+    // If error is about function signature, fall back to basic version
+    console.warn("Enhanced waterfall not available, falling back to basic version");
+  }
+
+  // Basic version (current DB schema)
   const { data, error } = await supabase.rpc("fn_run_categorization_waterfall", {
     p_transaction_ids: transactionIds,
   });
@@ -40,6 +66,155 @@ export async function triggerCategorizationWaterfall(
 
   // The stored procedure returns a JSON object with statistics
   return data as WaterfallResult;
+}
+
+/**
+ * Simple wrapper that auto-creates a batch for categorization.
+ * Falls back to basic waterfall if fn_categorize_transactions isn't deployed.
+ */
+export async function categorizeTransactionsSimple(
+  transactionIds: string[]
+): Promise<WaterfallResult> {
+  const supabase = createServerSupabaseClient();
+
+  // Try the convenience wrapper first
+  const { data, error } = await supabase.rpc("fn_categorize_transactions", {
+    p_transaction_ids: transactionIds,
+  });
+
+  if (error) {
+    // Fall back to basic waterfall if wrapper not deployed
+    if (error.message.includes("function") || error.code === "42883") {
+      console.warn("fn_categorize_transactions not available, using basic waterfall");
+      return triggerCategorizationWaterfall(transactionIds);
+    }
+    console.error("Error categorizing transactions:", error);
+    throw new Error(`Categorization failed: ${error.message}`);
+  }
+
+  return data as WaterfallResult;
+}
+
+/**
+ * Undo a batch operation with detailed results.
+ * Falls back to fn_undo_batch if enhanced version not deployed.
+ */
+export async function undoBatchDetailed(
+  batchId: string
+): Promise<UndoBatchResult> {
+  const supabase = createServerSupabaseClient();
+
+  // Try enhanced version first
+  const { data: detailedData, error: detailedError } = await supabase.rpc("fn_undo_batch_detailed", {
+    p_batch_id: batchId,
+  });
+
+  if (!detailedError) {
+    return detailedData as UndoBatchResult;
+  }
+
+  // Fall back to basic fn_undo_batch if enhanced not available
+  if (detailedError.message.includes("function") || detailedError.code === "42883") {
+    console.warn("fn_undo_batch_detailed not available, using basic undo");
+    const { data, error } = await supabase.rpc("fn_undo_batch", {
+      p_batch_id: batchId,
+    });
+
+    if (error) {
+      console.error("Error undoing batch:", error);
+      return { success: false, error: error.message };
+    }
+
+    // Basic version returns TABLE(success, transactions_reverted, error)
+    const result = Array.isArray(data) ? data[0] : data;
+    return {
+      success: result?.success ?? false,
+      reverted: result?.transactions_reverted ?? 0,
+      error: result?.error || undefined,
+    };
+  }
+
+  console.error("Error undoing batch:", detailedError);
+  return { success: false, error: detailedError.message };
+}
+
+/**
+ * Get categorization statistics for a date range.
+ * Falls back to client-side calculation if stored procedure not deployed.
+ */
+export async function getCategorizationStats(
+  startDate?: Date,
+  endDate?: Date
+): Promise<CategorizationStats> {
+  const supabase = createServerSupabaseClient();
+
+  // Try stored procedure first
+  const { data, error } = await supabase.rpc("fn_get_categorization_stats", {
+    p_start_date: startDate?.toISOString().split("T")[0] || null,
+    p_end_date: endDate?.toISOString().split("T")[0] || null,
+  });
+
+  if (!error) {
+    return data as CategorizationStats;
+  }
+
+  // Fall back to client-side calculation if function not deployed
+  if (error.message.includes("function") || error.code === "42883") {
+    console.warn("fn_get_categorization_stats not available, calculating client-side");
+    return calculateStatsClientSide(supabase, startDate, endDate);
+  }
+
+  console.error("Error getting categorization stats:", error);
+  throw new Error(`Failed to get stats: ${error.message}`);
+}
+
+/**
+ * Client-side fallback for categorization stats.
+ */
+async function calculateStatsClientSide(
+  supabase: ReturnType<typeof createServerSupabaseClient>,
+  startDate?: Date,
+  endDate?: Date
+): Promise<CategorizationStats> {
+  // Default to current month
+  const start = startDate || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const end = endDate || new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+
+  let query = supabase
+    .from("transactions")
+    .select("id, life_category_id, category_source, category_locked")
+    .eq("status", "posted")
+    .gte("date", start.toISOString().split("T")[0])
+    .lte("date", end.toISOString().split("T")[0]);
+
+  const { data: transactions, error } = await query;
+
+  if (error) {
+    throw new Error(`Failed to fetch transactions: ${error.message}`);
+  }
+
+  const total = transactions?.length || 0;
+  const categorized = transactions?.filter(t => t.life_category_id !== null).length || 0;
+  const locked = transactions?.filter(t => t.category_locked).length || 0;
+
+  const bySource: Record<string, number> = {};
+  for (const tx of transactions || []) {
+    const source = tx.category_source || "uncategorized";
+    bySource[source] = (bySource[source] || 0) + 1;
+  }
+
+  return {
+    date_range: {
+      start: start.toISOString().split("T")[0],
+      end: end.toISOString().split("T")[0],
+    },
+    total,
+    categorized,
+    uncategorized: total - categorized,
+    locked,
+    by_source: bySource,
+    categorization_rate: total > 0 ? Math.round((categorized / total) * 1000) / 10 : 0,
+  };
 }
 
 /**

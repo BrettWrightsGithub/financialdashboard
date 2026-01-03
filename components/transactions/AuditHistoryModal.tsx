@@ -94,8 +94,15 @@ export function AuditHistoryModal({
           ) : error ? (
             <div className="text-center py-8 text-red-500">{error}</div>
           ) : history.length === 0 ? (
-            <div className="text-center py-8 text-slate-500">
-              No category changes recorded for this transaction.
+            <div className="text-center py-8">
+              <div className="text-slate-500 mb-2">
+                No category changes recorded for this transaction.
+              </div>
+              <div className="text-xs text-slate-400">
+                History is recorded when categories are changed via rules, manual edits, or bulk operations.
+                <br />
+                <span className="text-amber-500">Note: The category_audit_log table may not exist yet. Check Supabase migrations.</span>
+              </div>
             </div>
           ) : (
             <div className="space-y-4">

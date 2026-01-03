@@ -1,4 +1,44 @@
--- Migration: Audit Log, Sync State, and Rule Application Batches
+-- ============================================================
+-- MIGRATION: Audit Log, Sync State, and Rule Application Batches
+-- ============================================================
+-- 
+-- FILE: 20260102_audit_log_and_sync.sql
+-- STATUS: ✅ DEPLOYED (Applied to Supabase production)
+-- DEPLOYED: 2026-01-02 (manually via Supabase SQL Editor)
+-- 
+-- PURPOSE:
+--   Creates the audit trail and batch tracking infrastructure for:
+--   - Category change explainability (who changed what, when, why)
+--   - Undo support (revert batch operations)
+--   - Pending→posted transaction handover (preserve user categorization)
+--   - Sync state for cursor-based Plaid sync
+--
+-- CREATES:
+--   Enums:
+--   - category_change_source (plaid, rule, manual, payee_memory, bulk_edit, etc.)
+--   
+--   Tables:
+--   - category_audit_log (tracks all category changes)
+--   - sync_state (Plaid sync cursors per account)
+--   - rule_application_batches (groups changes for undo)
+--   
+--   Functions:
+--   - fn_log_category_change(...) -> uuid
+--   - fn_handle_pending_handover() (TRIGGER)
+--   - fn_undo_batch(uuid) -> table
+--   - fn_apply_rule_retroactive(uuid, uuid[], text) -> table
+--   
+--   Triggers:
+--   - trg_handle_pending_handover ON transactions (BEFORE INSERT)
+--
+-- SHOULD I RUN THIS AGAIN?
+--   NO - Already deployed. Functions confirmed in Supabase:
+--   - fn_apply_rule_retroactive ✓
+--   - fn_handle_pending_handover ✓
+--   - fn_log_category_change ✓
+--   - fn_undo_batch ✓
+--
+-- ============================================================
 -- Implements workflows 11, 12, 13
 
 -- ============================================================

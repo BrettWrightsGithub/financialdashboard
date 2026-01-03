@@ -269,3 +269,65 @@ Denormalized view joining transactions with account, category, and counterparty 
 | category_color            | text        | From categories.color |
 | counterparty_display_name | text        | From counterparties.name |
 | counterparty_type         | text        | From counterparties.type |
+
+---
+
+## Table: category_audit_log
+
+Tracks all category changes for explainability and undo support.
+
+| Column              | Type                    | Nullable | Default           | Notes |
+|---------------------|-------------------------|----------|-------------------|-------|
+| id (pk)             | uuid                    | NO       | gen_random_uuid() | |
+| transaction_id      | uuid                    | NO       | —                 | FK → transactions.id. |
+| previous_category_id| uuid                    | YES      | —                 | FK → categories.id. Previous category. |
+| new_category_id     | uuid                    | YES      | —                 | FK → categories.id. New category. |
+| change_source       | category_change_source  | NO       | —                 | `plaid`, `rule`, `manual`, `payee_memory`, `bulk_edit`, `reimbursement_link`, `system`. |
+| rule_id             | uuid                    | YES      | —                 | FK → categorization_rules.id. |
+| confidence_score    | numeric(4,3)            | YES      | —                 | 0.000–1.000. |
+| changed_by          | text                    | NO       | `'system'`        | `system` or user identifier. |
+| batch_id            | uuid                    | YES      | —                 | FK → rule_application_batches.id. |
+| notes               | text                    | YES      | —                 | Additional context. |
+| is_reverted         | boolean                 | YES      | false             | TRUE if change was undone. |
+| created_at          | timestamptz             | YES      | now()             | |
+
+---
+
+## Table: sync_state
+
+Tracks sync cursor and status per account/connection for Plaid sync.
+
+| Column                 | Type        | Nullable | Default           | Notes |
+|------------------------|-------------|----------|-------------------|-------|
+| id (pk)                | uuid        | NO       | gen_random_uuid() | |
+| account_id             | uuid        | YES      | —                 | FK → accounts.id. |
+| connection_id          | uuid        | YES      | —                 | FK → provider_connections.id. |
+| cursor                 | text        | YES      | —                 | Plaid's sync cursor. |
+| last_sync_at           | timestamptz | YES      | —                 | Last successful sync. |
+| last_sync_status       | text        | YES      | `'success'`       | `success`, `error`, `in_progress`. |
+| last_error             | text        | YES      | —                 | Error message if failed. |
+| transactions_added     | integer     | YES      | 0                 | Count from last sync. |
+| transactions_modified  | integer     | YES      | 0                 | Count from last sync. |
+| transactions_removed   | integer     | YES      | 0                 | Count from last sync. |
+| created_at             | timestamptz | YES      | now()             | |
+| updated_at             | timestamptz | YES      | now()             | |
+
+---
+
+## Table: rule_application_batches
+
+Tracks batch categorization operations for undo support.
+
+| Column            | Type        | Nullable | Default           | Notes |
+|-------------------|-------------|----------|-------------------|-------|
+| id (pk)           | uuid        | NO       | gen_random_uuid() | |
+| rule_id           | uuid        | YES      | —                 | FK → categorization_rules.id. |
+| operation_type    | text        | NO       | `'rule_apply'`    | `rule_apply`, `waterfall`, `bulk_edit`. |
+| applied_at        | timestamptz | YES      | now()             | |
+| transaction_count | integer     | YES      | 0                 | Number of transactions affected. |
+| date_range_start  | date        | YES      | —                 | Optional filter start. |
+| date_range_end    | date        | YES      | —                 | Optional filter end. |
+| is_undone         | boolean     | YES      | false             | TRUE if batch was reverted. |
+| undone_at         | timestamptz | YES      | —                 | When undo occurred. |
+| description       | text        | YES      | —                 | Description of operation. |
+| created_by        | text        | YES      | `'system'`        | Who initiated. |

@@ -1,7 +1,24 @@
 ---
 description: Implement retroactive rule application with dry-run preview and undo capability per `docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md` (FR-15, FR-16, TI-04).
 auto_execution_mode: 1
+status: COMPLETED
+completed_date: 2026-01-02
 ---
+
+## Completion Summary
+
+**Done:** Implemented retroactive rule application with preview and undo.
+
+- Created `rule_application_batches` table in migration - batch tracking for undo
+- Created `fn_apply_rule_retroactive()` stored procedure - applies rule with batch logging
+- Created `fn_undo_batch()` stored procedure - ACID revert of batch operations
+- Created `lib/categorization/retroactiveRules.ts` - Preview, apply, undo wrappers
+- Created `app/api/rules/preview/route.ts` - Dry-run preview API
+- Created `app/api/rules/apply-retroactive/route.ts` - Apply rule API
+- Created `app/api/rules/undo-batch/route.ts` - Undo batch API
+- Created `app/admin/batches/page.tsx` - Batch history UI with undo
+- Created `app/api/admin/batches/route.ts` - List batches API
+- Created `docs/categorization/retroactive_rules.md` - Documentation
 
 ## Testing Reference
 

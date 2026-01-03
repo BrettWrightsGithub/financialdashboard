@@ -3,6 +3,7 @@
 interface CategorySourceBadgeProps {
   source: string | null;
   confidence?: number | null;
+  ruleName?: string | null;
 }
 
 /**
@@ -12,7 +13,7 @@ interface CategorySourceBadgeProps {
  * - Manual (green): Manually set by user
  * - AI (orange): Categorized by AI suggestion
  */
-export function CategorySourceBadge({ source, confidence }: CategorySourceBadgeProps) {
+export function CategorySourceBadge({ source, confidence, ruleName }: CategorySourceBadgeProps) {
   if (!source) return null;
 
   const config: Record<string, { label: string; className: string }> = {
@@ -21,7 +22,7 @@ export function CategorySourceBadge({ source, confidence }: CategorySourceBadgeP
       className: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
     },
     rule: {
-      label: "Rule",
+      label: ruleName ? `Rule: ${ruleName}` : "Rule",
       className: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
     },
     manual: {
@@ -40,6 +41,18 @@ export function CategorySourceBadge({ source, confidence }: CategorySourceBadgeP
       label: "Learned",
       className: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
     },
+    bulk_edit: {
+      label: "Bulk",
+      className: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300",
+    },
+    reimbursement_link: {
+      label: "Linked",
+      className: "bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300",
+    },
+    system: {
+      label: "System",
+      className: "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300",
+    },
   };
 
   const sourceConfig = config[source.toLowerCase()] || {
@@ -47,7 +60,9 @@ export function CategorySourceBadge({ source, confidence }: CategorySourceBadgeP
     className: "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300",
   };
 
-  const title = confidence ? `${sourceConfig.label} (${Math.round(confidence * 100)}% confidence)` : sourceConfig.label;
+  const parts = [sourceConfig.label];
+  if (confidence) parts.push(`${Math.round(confidence * 100)}% conf`);
+  const title = parts.join(" • ");
 
   return (
     <span

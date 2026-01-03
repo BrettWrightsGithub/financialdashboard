@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { formatCurrencyPrecise } from "@/lib/cashflow";
-import { updateTransactionCategory } from "@/lib/queries";
+import { updateTransactionCategory, updateTransactionFlags } from "@/lib/queries";
+import { CategorySourceBadge } from "./CategorySourceBadge";
 import type { TransactionWithDetails, Category } from "@/types/database";
 
 interface TransactionTableProps {
@@ -73,17 +74,47 @@ function TransactionRow({
   const [isEditing, setIsEditing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(transaction.life_category_id);
   const [saving, setSaving] = useState(false);
+  const [localFlags, setLocalFlags] = useState({
+    is_transfer: transaction.is_transfer,
+    is_pass_through: transaction.is_pass_through,
+    is_business: transaction.is_business,
+  });
 
   const isIncome = transaction.amount >= 0;
+
+  const handleFlagToggle = async (flag: 'is_transfer' | 'is_pass_through' | 'is_business') => {
+    const newValue = !localFlags[flag];
+    setLocalFlags(prev => ({ ...prev, [flag]: newValue }));
+    try {
+      await updateTransactionFlags(transaction.id, { [flag]: newValue });
+      onUpdate?.();
+    } catch (error) {
+      console.error("Failed to update flag:", error);
+      setLocalFlags(prev => ({ ...prev, [flag]: !newValue }));
+    }
+  };
 
   const handleCategoryChange = async (newCategoryId: string) => {
     setSelectedCategory(newCategoryId);
     setSaving(true);
     try {
-      await updateTransactionCategory(transaction.id, newCategoryId);
+      // Use the override API which also sets category_locked and learns payee
+      const res = await fetch(`/api/transactions/${transaction.id}/override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category_id: newCategoryId, learn_payee: true }),
+      });
+      
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to update category");
+      }
+      
       onUpdate?.();
     } catch (error) {
       console.error("Failed to update category:", error);
+      // Revert on error
+      setSelectedCategory(transaction.life_category_id);
     } finally {
       setSaving(false);
       setIsEditing(false);
@@ -129,15 +160,21 @@ function TransactionRow({
             ))}
           </select>
         ) : (
-          <button
-            onClick={() => setIsEditing(true)}
-            className="text-sm text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
-          >
-            {transaction.category_name}
-            {transaction.category_locked && (
-              <span className="text-xs" title="Manually set">🔒</span>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsEditing(true)}
+              className="text-sm text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
+            >
+              {transaction.category_name || "Uncategorized"}
+              {transaction.category_locked && (
+                <span className="text-xs" title="Manually set">🔒</span>
+              )}
+            </button>
+            <CategorySourceBadge 
+              source={transaction.category_source} 
+              confidence={transaction.category_ai_conf ? transaction.category_ai_conf / 100 : null} 
+            />
+          </div>
         )}
       </td>
 
@@ -154,24 +191,42 @@ function TransactionRow({
         {formatCurrencyPrecise(transaction.amount)}
       </td>
 
-      {/* Flags */}
+      {/* Flags (Clickable Toggles) */}
       <td className="px-4 py-3">
         <div className="flex justify-center gap-1">
-          {transaction.is_transfer && (
-            <span className="px-1.5 py-0.5 text-xs rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300" title="Transfer">
-              T
-            </span>
-          )}
-          {transaction.is_pass_through && (
-            <span className="px-1.5 py-0.5 text-xs rounded bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300" title="Pass-Through">
-              P
-            </span>
-          )}
-          {transaction.is_business && (
-            <span className="px-1.5 py-0.5 text-xs rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300" title="Business">
-              B
-            </span>
-          )}
+          <button
+            onClick={() => handleFlagToggle('is_transfer')}
+            className={`px-1.5 py-0.5 text-xs rounded cursor-pointer transition-colors ${
+              localFlags.is_transfer
+                ? "bg-slate-200 dark:bg-slate-600 text-slate-700 dark:text-slate-200"
+                : "bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-600"
+            }`}
+            title={localFlags.is_transfer ? "Transfer (click to remove)" : "Mark as Transfer"}
+          >
+            T
+          </button>
+          <button
+            onClick={() => handleFlagToggle('is_pass_through')}
+            className={`px-1.5 py-0.5 text-xs rounded cursor-pointer transition-colors ${
+              localFlags.is_pass_through
+                ? "bg-amber-200 dark:bg-amber-800 text-amber-700 dark:text-amber-200"
+                : "bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 hover:bg-amber-100 dark:hover:bg-amber-900"
+            }`}
+            title={localFlags.is_pass_through ? "Pass-Through (click to remove)" : "Mark as Pass-Through"}
+          >
+            P
+          </button>
+          <button
+            onClick={() => handleFlagToggle('is_business')}
+            className={`px-1.5 py-0.5 text-xs rounded cursor-pointer transition-colors ${
+              localFlags.is_business
+                ? "bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-200"
+                : "bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 hover:bg-blue-100 dark:hover:bg-blue-900"
+            }`}
+            title={localFlags.is_business ? "Business (click to remove)" : "Mark as Business"}
+          >
+            B
+          </button>
         </div>
       </td>
     </tr>

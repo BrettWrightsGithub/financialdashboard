@@ -1,38 +1,13 @@
 "use client";
 
-import { formatCurrency, formatMonth } from "@/lib/cashflow";
+import { useEffect, useState } from "react";
+import { formatCurrency } from "@/lib/cashflow";
+import { getBudgetSummary } from "@/lib/queries";
 import type { BudgetSummary, CashflowGroup } from "@/types/database";
 
 interface BudgetTableProps {
   month: string; // YYYY-MM format
 }
-
-// TODO: Replace with real data from Supabase
-const MOCK_DATA: BudgetSummary[] = [
-  // Income
-  { categoryId: "1", categoryName: "Salary", cashflowGroup: "Income", expected: 7500, actual: 7500, variance: 0, percentUsed: 100 },
-  { categoryId: "2", categoryName: "Rental Income", cashflowGroup: "Income", expected: 2800, actual: 2100, variance: -700, percentUsed: 75 },
-  { categoryId: "3", categoryName: "T-Mobile Reimbursement", cashflowGroup: "Income", expected: 180, actual: 135, variance: -45, percentUsed: 75 },
-  // Fixed
-  { categoryId: "4", categoryName: "Mortgage", cashflowGroup: "Fixed", expected: 2200, actual: 2200, variance: 0, percentUsed: 100 },
-  { categoryId: "5", categoryName: "Utilities", cashflowGroup: "Fixed", expected: 250, actual: 235, variance: -15, percentUsed: 94 },
-  { categoryId: "6", categoryName: "Insurance", cashflowGroup: "Fixed", expected: 400, actual: 400, variance: 0, percentUsed: 100 },
-  { categoryId: "7", categoryName: "Subscriptions", cashflowGroup: "Fixed", expected: 150, actual: 165, variance: 15, percentUsed: 110 },
-  // Variable Essentials
-  { categoryId: "8", categoryName: "Groceries", cashflowGroup: "Variable Essentials", expected: 800, actual: 720, variance: -80, percentUsed: 90 },
-  { categoryId: "9", categoryName: "Gas/Fuel", cashflowGroup: "Variable Essentials", expected: 200, actual: 180, variance: -20, percentUsed: 90 },
-  { categoryId: "10", categoryName: "Healthcare", cashflowGroup: "Variable Essentials", expected: 100, actual: 45, variance: -55, percentUsed: 45 },
-  // Discretionary
-  { categoryId: "11", categoryName: "Dining Out", cashflowGroup: "Discretionary", expected: 300, actual: 450, variance: 150, percentUsed: 150 },
-  { categoryId: "12", categoryName: "Entertainment", cashflowGroup: "Discretionary", expected: 150, actual: 85, variance: -65, percentUsed: 57 },
-  { categoryId: "13", categoryName: "Shopping", cashflowGroup: "Discretionary", expected: 200, actual: 320, variance: 120, percentUsed: 160 },
-  // Debt
-  { categoryId: "14", categoryName: "Car Payment", cashflowGroup: "Debt", expected: 450, actual: 450, variance: 0, percentUsed: 100 },
-  { categoryId: "15", categoryName: "Student Loan", cashflowGroup: "Debt", expected: 350, actual: 350, variance: 0, percentUsed: 100 },
-  // Savings
-  { categoryId: "16", categoryName: "Emergency Fund", cashflowGroup: "Savings/Investing", expected: 500, actual: 500, variance: 0, percentUsed: 100 },
-  { categoryId: "17", categoryName: "Investment", cashflowGroup: "Savings/Investing", expected: 400, actual: 400, variance: 0, percentUsed: 100 },
-];
 
 const GROUP_ORDER: CashflowGroup[] = [
   "Income",
@@ -44,19 +19,82 @@ const GROUP_ORDER: CashflowGroup[] = [
 ];
 
 export function BudgetTable({ month }: BudgetTableProps) {
+  const [loading, setLoading] = useState(true);
+  const [budgetData, setBudgetData] = useState<BudgetSummary[]>([]);
+
+  useEffect(() => {
+    async function fetchBudgetData() {
+      setLoading(true);
+      try {
+        const { categories, targets, actuals, actualsByCashflowGroup } = await getBudgetSummary(month);
+
+        // Build a map of category_id -> actual spending
+        const actualsMap: Record<string, number> = {};
+        for (const a of actuals) {
+          actualsMap[a.category_id] = a.total;
+        }
+
+        // Build a map of cashflow_group -> actual spending (fallback)
+        const cashflowGroupActualsMap: Record<string, number> = {};
+        for (const a of actualsByCashflowGroup) {
+          cashflowGroupActualsMap[a.cashflow_group] = a.total;
+        }
+
+        // Build a map of category_id -> budget target
+        const targetsMap: Record<string, number> = {};
+        for (const t of targets) {
+          targetsMap[t.category_id] = t.amount;
+        }
+
+        // Build budget summary for each category that has a target
+        const summaries: BudgetSummary[] = [];
+
+        for (const cat of categories) {
+          const expected = targetsMap[cat.id] || 0;
+          // Skip categories with no budget target
+          if (expected === 0) continue;
+
+          // Get actual from direct category match, or fallback to 0
+          const actual = actualsMap[cat.id] || 0;
+          const variance = actual - expected;
+          const percentUsed = expected > 0 ? Math.round((actual / expected) * 100) : 0;
+
+          summaries.push({
+            categoryId: cat.id,
+            categoryName: cat.name,
+            cashflowGroup: cat.cashflow_group,
+            expected,
+            actual,
+            variance,
+            percentUsed,
+          });
+        }
+
+        setBudgetData(summaries);
+      } catch (error) {
+        console.error("Error fetching budget data:", error);
+        setBudgetData([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchBudgetData();
+  }, [month]);
+
   // Group data by cashflow group
   const groupedData = GROUP_ORDER.map((group) => ({
     group,
-    items: MOCK_DATA.filter((d) => d.cashflowGroup === group),
+    items: budgetData.filter((d) => d.cashflowGroup === group),
   })).filter((g) => g.items.length > 0);
 
-  // Calculate totals
+  // Calculate totals from real data
   const totals = {
     income: { expected: 0, actual: 0 },
     expenses: { expected: 0, actual: 0 },
   };
 
-  MOCK_DATA.forEach((d) => {
+  budgetData.forEach((d) => {
     if (d.cashflowGroup === "Income") {
       totals.income.expected += d.expected;
       totals.income.actual += d.actual;
@@ -68,6 +106,39 @@ export function BudgetTable({ month }: BudgetTableProps) {
 
   const netExpected = totals.income.expected - totals.expenses.expected;
   const netActual = totals.income.actual - totals.expenses.actual;
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="card p-4 animate-pulse">
+              <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-1/2 mb-4"></div>
+              <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
+            </div>
+          ))}
+        </div>
+        <div className="card p-8 text-center text-slate-500 dark:text-slate-400">
+          Loading budget data...
+        </div>
+      </div>
+    );
+  }
+
+  // Show empty state if no budget targets
+  if (budgetData.length === 0) {
+    return (
+      <div className="card p-8 text-center">
+        <p className="text-slate-500 dark:text-slate-400">
+          No budget targets found for this month.
+        </p>
+        <p className="text-sm text-slate-400 dark:text-slate-500 mt-2">
+          Add budget targets in Supabase to see your budget vs actuals.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

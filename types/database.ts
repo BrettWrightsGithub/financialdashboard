@@ -91,6 +91,7 @@ export interface Transaction {
   is_transfer: boolean;
   is_pass_through: boolean;
   is_business: boolean;
+  category_source: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -171,6 +172,7 @@ export interface TransactionFilters {
   cashflowGroup: CashflowGroup | null;
   hideTransfers: boolean;
   hidePassThrough: boolean;
+  searchQuery: string;
 }
 
 // Budget summary for display
@@ -207,3 +209,42 @@ export interface OutstandingInflow {
   outstanding: number;
   status: "received" | "pending" | "overdue";
 }
+
+// Categorization Rule from categorization_rules table
+export interface CategorizationRule {
+  id: string;
+  name: string;
+  description: string | null;
+  priority: number;
+  is_active: boolean;
+  match_merchant_contains: string | null;
+  match_merchant_exact: string | null;
+  match_amount_min: number | null;
+  match_amount_max: number | null;
+  match_account_id: string | null;
+  match_account_subtype: string | null;
+  match_direction: "inflow" | "outflow" | null;
+  assign_category_id: string;
+  assign_is_transfer: boolean | null;
+  assign_is_pass_through: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Rule with category name for display
+export interface CategorizationRuleWithCategory extends CategorizationRule {
+  category_name: string;
+}
+
+// Result from categorization waterfall
+export interface WaterfallResult {
+  processed: number;
+  rules_applied: number;
+  memory_applied: number;
+  plaid_applied: number;
+  skipped_locked: number;
+  uncategorized: number;
+}
+
+// Category source types
+export type CategorySource = "manual" | "rule" | "payee_memory" | "plaid" | "override";

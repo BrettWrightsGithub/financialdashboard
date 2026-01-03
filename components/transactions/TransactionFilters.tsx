@@ -34,6 +34,20 @@ export function TransactionFilters({ filters, onFiltersChange, accounts }: Trans
   return (
     <div className="card p-4">
       <div className="flex flex-wrap items-end gap-4">
+        {/* Search */}
+        <div>
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+            Search
+          </label>
+          <input
+            type="text"
+            value={filters.searchQuery || ""}
+            onChange={(e) => updateFilter("searchQuery", e.target.value)}
+            placeholder="Search description..."
+            className="input text-sm min-w-[180px]"
+          />
+        </div>
+
         {/* Date Range */}
         <div className="flex gap-2">
           <div>

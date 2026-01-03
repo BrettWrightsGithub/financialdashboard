@@ -181,21 +181,76 @@ Used for: monthly net vs budget, weekly Safe‑to‑Spend.
 
 ---
 
-### 2.7 `category_overrides`
+### 2.7 `categorization_rules`
 
-Stores manual corrections to help the AI "learn" over time.
+Programmatic rules for automatic transaction categorization with priority-based waterfall logic.
 
-| Field              | Type        | Notes |
+| Field                   | Type    | Notes |
+|------------------------|---------|-------|
+| id (PK)                | uuid    | |
+| name                   | text    | Human-readable rule name. |
+| priority               | integer | Higher number = runs first in waterfall. |
+| merchant_match         | text    | Pattern to match against transaction description. |
+| merchant_match_type    | text    | `exact`, `contains`, `regex`. |
+| amount_min             | numeric | Optional minimum amount filter. |
+| amount_max             | numeric | Optional maximum amount filter. |
+| account_id             | uuid    | Optional FK → accounts.id (filter by specific account). |
+| direction              | text    | `debit`, `credit`, `any`. |
+| target_category_id     | uuid    | FK → categories.id (category to assign). |
+| is_active              | boolean | Default TRUE. |
+| created_at             | timestamptz | |
+| updated_at             | timestamptz | |
+
+Rules are evaluated in priority order. First matching rule wins.
+
+### 2.8 `payee_category_mappings`
+
+Learns from user overrides to automatically categorize future transactions from the same payee.
+
+| Field       | Type        | Notes |
+|------------|------------|-------|
+| id (PK)    | uuid       | |
+| payee_name | text       | Normalized merchant/payee name. |
+| category_id| uuid       | FK → categories.id. |
+| confidence | numeric    | Default 1.0, can be adjusted. |
+| usage_count| integer    | Increments each time mapping is applied. |
+| created_at | timestamptz| |
+| updated_at | timestamptz| |
+
+Payee memory applies after rules but before Plaid defaults in the categorization waterfall.
+
+### 2.9 `category_audit_log`
+
+Tracks all category changes for explainability and undo operations.
+
+| Field                | Type        | Notes |
 |--------------------|------------|-------|
 | id (PK)            | uuid       | |
 | transaction_id     | uuid       | FK → transactions.id. |
-| description_snapshot | text     | Description at time of override. |
-| old_category_id    | uuid       | Previous category. |
-| new_category_id    | uuid       | New corrected category. |
-| reason             | text       | Optional explanation. |
+| previous_category_id| uuid      | FK → categories.id (nullable). |
+| new_category_id    | uuid       | FK → categories.id. |
+| change_source      | text       | `plaid`, `rule`, `manual`, `payee_memory`, `pending_handover`. |
+| rule_id            | uuid       | FK → categorization_rules.id (nullable). |
+| batch_id           | uuid       | FK → rule_application_batches.id (nullable). |
+| confidence_score   | numeric    | 0-1 confidence for AI/Plaid categorizations. |
+| is_reverted        | boolean    | TRUE if batch was undone. |
 | created_at         | timestamptz| |
 
-Overrides can be summarized into patterns and fed back into the AI prompt.
+Used for audit history, explainability badges, and batch undo operations.
+
+### 2.10 `rule_application_batches`
+
+Tracks batch rule applications for bulk undo capability.
+
+| Field             | Type        | Notes |
+|------------------|------------|-------|
+| id (PK)          | uuid       | |
+| rule_id          | uuid       | FK → categorization_rules.id. |
+| applied_at       | timestamptz| |
+| transaction_count| integer    | Number of transactions affected. |
+| is_undone        | boolean    | TRUE if batch was reverted. |
+
+Enables ACID undo of entire rule applications.
 
 ---
 
@@ -264,11 +319,101 @@ Venmo cashouts landing in AFCU as ACH deposits get categorized as `Transfer` wit
 
 ---
 
-## 4. AI Categorization Prompt (v1 Skeleton)
+## 4. Categorization System
+
+### 4.1 Categorization Waterfall (Priority Order)
+
+The system uses a multi-layered waterfall approach for transaction categorization:
+
+1. **Category Locked Check** - Skip transactions where `category_locked = TRUE`
+2. **User-Defined Rules** - Apply `categorization_rules` in priority order (highest first)
+3. **Payee Memory** - Check `payee_category_mappings` for learned patterns
+4. **Plaid Defaults** - Fall back to Plaid categorization if confidence > 0.8
+5. **Uncategorized** - Remains NULL for manual review
+
+All categorization logic is implemented as **Supabase stored procedures** for performance and ACID guarantees.
+
+### 4.2 Key Stored Procedures
+
+**`fn_run_categorization_waterfall(p_batch_id UUID, p_transaction_ids UUID[])`**
+- Executes the full waterfall logic for a batch of transactions
+- Returns statistics: `{ processed, rules_applied, memory_applied, plaid_applied, skipped_locked }`
+- Logs all changes to `category_audit_log`
+- Called by n8n for bulk operations and by the UI for single transactions
+
+**`fn_undo_batch(p_batch_id UUID)`**
+- Reverts all categorization changes from a batch
+- Restores previous categories using audit log
+- Marks batch as undone in `rule_application_batches`
+- Ensures ACID transaction integrity
+
+**`fn_handle_pending_handover()`**
+- Trigger that fires when posted transaction arrives
+- Copies user categorization from pending to posted transaction using `pending_transaction_id`
+- Deletes old pending record
+- Prevents loss of manual categorization work
+
+### 4.3 User Override and Learning
+
+When a user manually changes a category:
+1. Transaction is updated with new `category_id`
+2. `category_locked` set to TRUE (protects from re-categorization)
+3. `category_source` set to `'manual'`
+4. Change logged to `category_audit_log`
+5. Payee mapping saved to `payee_category_mappings` for future transactions
+
+### 4.4 Transfer Detection and Reimbursement Handling
+
+**Transfer Detection:**
+- Heuristic: Same amount (opposite sign) within 3 days between same-owner accounts
+- P2P services (Venmo, Zelle, PayPal) classified based on context
+- Manual toggle available in UI for edge cases
+
+**Reimbursements:**
+- Link reimbursement to original expense using `reimbursement_of_id`
+- T-Mobile family payments marked with `is_pass_through = TRUE`
+- Enables proper netting in cashflow calculations
+
+### 4.5 Transaction Splitting
+
+Manual splitting for mixed-category purchases (e.g., groceries + household items at Target):
+- Parent transaction marked with `is_split_parent = TRUE`
+- Child transactions created with `parent_transaction_id` set
+- Each child gets its own category
+- Parent excluded from cashflow calculations (only children counted)
+
+### 4.6 Review Queue and Bulk Editing
+
+**Review Queue** surfaces transactions needing attention:
+- Uncategorized (`category_id IS NULL`)
+- Low confidence (`category_confidence < 0.7`)
+- Ambiguous P2P transactions
+
+**Bulk Editing:**
+- Multi-select transactions for batch category assignment
+- Creates `category_overrides` records
+- Updates payee memory for unique payees
+- Tracks changes in audit log
+
+### 4.7 Explainability
+
+Every transaction displays a **Category Source Badge**:
+- **Plaid** (blue) - Plaid categorization with confidence score
+- **Rule: [name]** (purple) - Matched a user-defined rule
+- **Manual** (green) - User manually categorized
+- **Learned** (orange) - Applied from payee memory
+
+Click badge to view full audit history of category changes.
+
+---
+
+## 5. AI Categorization Prompt (v1 Skeleton - DEPRECATED)
+
+**Note:** This section describes the original AI prompt approach. The system now uses a rule engine + payee memory waterfall (see Section 4). AI categorization may be reintroduced in the future for edge cases.
 
 **Goal:** Given a single transaction JSON, return a structured classification object.
 
-### 4.1 Expected output JSON
+### 5.1 Expected output JSON
 
 ```json
 {
@@ -282,7 +427,7 @@ Venmo cashouts landing in AFCU as ACH deposits get categorized as `Transfer` wit
 }
 ```
 
-### 4.2 Prompt structure (stored in `prompts/transaction_categorizer_v1.md`)
+### 5.2 Prompt structure (stored in `prompts/transaction_categorizer_v1.md`)
 
 Key elements:
 - Explain category system (`name`, `life_group`, `flow_type`, `cashflow_group`).
@@ -305,14 +450,14 @@ Key elements:
 
 ---
 
-## 5. Cashflow & Safe-to-Spend Logic
+## 6. Cashflow & Safe-to-Spend Logic
 
-### 5.1 Included vs Excluded Accounts
+### 6.1 Included vs Excluded Accounts
 
 - **Included for cashflow**: any account where `include_in_cashflow = TRUE` (AFCU checking, other active checking/savings, credit cards, loans).
 - **Excluded**: 401k, HSA investments, Betterment, property/vehicle asset entries, and accounts explicitly set `include_in_cashflow = FALSE`.
 
-### 5.2 Transfers vs Applied-to-debt/savings
+### 6.2 Transfers vs Applied-to-debt/savings
 
 - Transactions with:
   - `category_name = "Transfer"` and/or `cashflow_group = "Transfer"` and `is_transfer = true`
@@ -321,7 +466,7 @@ Key elements:
 - If you want to track actual savings contributions / extra paydown as spending knobs:
   - give them categories like `Investments`, `Emergency Prep`, `Extra Loan Payment` with `cashflow_group = 'Savings/Investing'` or `Debt`, and **do not** mark them as `Transfer`.
 
-### 5.3 Monthly Net Cashflow
+### 6.3 Monthly Net Cashflow
 
 For month M:
 - Include transactions where:
@@ -345,7 +490,7 @@ With amounts normalized (income positive, expenses negative):
 
 If NetCashflow < 0 ⇒ cashflow negative.
 
-### 5.4 Weekly Safe-to-Spend
+### 6.4 Weekly Safe-to-Spend
 
 1. Compute monthly discretionary budget from `budget_targets`:
    - `MonthlyDiscretionaryBudget = SUM(amount)` for month M where `categories.cashflow_group = 'Discretionary'`.
@@ -365,7 +510,7 @@ If NetCashflow < 0 ⇒ cashflow negative.
 
 This is the main number shown on the dashboard.
 
-### 5.5 Expected Income Not Yet Received
+### 6.5 Expected Income Not Yet Received
 
 For each row in `expected_inflows` for month M:
 
@@ -383,7 +528,7 @@ Summaries:
 
 ---
 
-## 6. Plaid Cost Planning (AFCU Only)
+## 7. Plaid Cost Planning (AFCU Only)
 
 Plaid pricing (relevant parts):
 - Balance: **$0.10 per call**

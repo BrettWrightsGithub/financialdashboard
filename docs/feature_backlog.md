@@ -36,9 +36,92 @@ The LLM would:
 
 ---
 
+### 2. Backfill Transaction Categorization with Review Process
+
+**Description:**  
+Enable users to retroactively apply a newly created categorization rule to existing transactions, with a review/preview modal before confirming the changes.
+
+**User Flow:**
+1. User creates a new categorization rule
+2. System offers option to "Apply to existing transactions"
+3. System analyzes and identifies all matching historical transactions
+4. Preview modal displays:
+   - Number of transactions that will be affected
+   - List of transactions with current vs. new category
+   - Before/after comparison
+   - Ability to select/deselect individual transactions
+5. User reviews and confirms changes
+6. System applies categorization in bulk
+
+**Requirements:**
+- Background job/worker to find matching transactions based on rule criteria
+- Preview modal component showing affected transactions
+- Bulk update API endpoint
+- Transaction comparison UI (current category → new category)
+- Individual transaction selection/deselection
+- Confirmation workflow with undo capability
+- Performance optimization for large transaction sets
+- Audit trail of bulk categorization changes
+
+**Technical Considerations:**
+- Should this be done via Supabase RPC function for performance?
+- Need to handle large result sets efficiently (pagination in preview?)
+- Consider rate limiting for bulk updates
+- Should integrate with existing rule engine (workflow 06)
+- Need to track which rules have been backfilled to avoid duplicate prompts
+
+**Priority:** Medium  
+**Status:** Backlog  
+**Dependencies:** 
+- Existing rule engine (workflow 06)
+- Transaction categorization workflows
+
+---
+
 ## Improvements
 
-### 2. Mobile Friendliness
+### 3. Visual Hierarchy for Split Transactions
+
+**Description:**  
+Add visual indentation/tabbing for child transactions from split transactions in the transaction table to improve readability and make parent-child relationships immediately clear.
+
+**Visual Design:**
+- Parent transaction displays normally at the left edge
+- Child transactions are visually indented/tabbed to the right
+- Optional: Add visual connector lines or icons (e.g., └─, ├─) to show hierarchy
+- Possible collapse/expand functionality for parent transactions
+- Different background shading or border styling for child rows
+
+**Example Layout:**
+```
+Parent Transaction ($100)           Category: General
+  └─ Child 1 ($60)                 Category: Groceries
+  └─ Child 2 ($40)                 Category: Dining
+```
+
+**Requirements:**
+- Detect parent-child relationship in transaction data
+- CSS styling for indentation and visual hierarchy
+- Optional: Collapsible rows for better space management
+- Mobile-responsive design (consider horizontal space constraints)
+- Maintain table sorting/filtering functionality with hierarchy
+- Ensure accessibility (screen readers should understand hierarchy)
+
+**Technical Considerations:**
+- How to handle nested splits (splits within splits)?
+- Should parent transaction amount be editable if children exist?
+- Performance impact on large transaction lists with many splits
+- Should child transactions be hideable by default for cleaner view?
+
+**Priority:** Medium  
+**Status:** Backlog  
+**Dependencies:** 
+- Transaction splitting functionality (workflow 09)
+- TransactionTable component
+
+---
+
+### 4. Mobile Friendliness
 
 **Description:**  
 Improve the responsive design and mobile user experience across all pages of the application.
@@ -55,7 +138,7 @@ Improve the responsive design and mobile user experience across all pages of the
 
 ---
 
-### 3. Shadcn UI Front-End Overhaul
+### 5. Shadcn UI Front-End Overhaul
 
 **Description:**  
 Migrate the entire front-end to use Shadcn UI components for a more consistent, modern, and accessible design system.
@@ -72,7 +155,7 @@ Migrate the entire front-end to use Shadcn UI components for a more consistent, 
 
 ---
 
-### 4. Feature-to-Database Mapping Documentation
+### 6. Feature-to-Database Mapping Documentation
 
 **Description:**  
 Create comprehensive documentation that maps each feature to its required database values, functions, and dependencies.
@@ -88,7 +171,7 @@ Create comprehensive documentation that maps each feature to its required databa
 
 ---
 
-### 4.1 Interactive Admin Documentation Layer
+### 7. Interactive Admin Documentation Layer
 
 **Description:**  
 Build a front-end admin layer that provides inline documentation for each feature and field with hover tooltips.
@@ -112,7 +195,101 @@ Build a front-end admin layer that provides inline documentation for each featur
 
 **Priority:** TBD  
 **Status:** Backlog  
-**Dependencies:** Feature #4 (database mapping documentation)
+**Dependencies:** Feature #6 (database mapping documentation)
+
+---
+
+### 8. JavaScript Bundle Optimization
+
+**Description:**  
+Reduce JavaScript execution time and bundle size to improve page load performance and responsiveness.
+
+**Current Performance Metrics (from Lighthouse - Development Build):**
+- Total JavaScript execution time: 1.4s
+- Main-thread work: 4.5s
+- Largest contributors:
+  - react-dom-client.development.js: 2,358ms CPU time, 996ms script evaluation
+  - Transactions page: 943ms CPU time, 105ms script evaluation
+
+**Note:** Current metrics are from development build. Production build testing required to establish actual baseline performance before implementing optimizations.
+
+**Next Steps:**
+1. **Baseline Production Performance:**
+   - Run Lighthouse on production build first
+   - Establish actual performance metrics
+   - Identify real bottlenecks (development React explains ~2.3s of current metrics)
+
+2. **Code Splitting (if needed after prod testing):**
+   - Implement dynamic imports for route-based code splitting
+   - Lazy load heavy components (charts, modals, complex tables)
+   - Split vendor bundles more aggressively
+
+3. **Bundle Analysis (if needed after prod testing):**
+   - Run webpack-bundle-analyzer to identify largest dependencies
+   - Replace heavy libraries with lighter alternatives where possible
+   - Tree-shake unused code
+
+4. **Runtime Performance (if needed after prod testing):**
+   - Memoize expensive computations
+   - Optimize React re-renders with React.memo and useMemo
+   - Defer non-critical JavaScript execution
+
+**Priority:** Low (blocked until production baseline established)  
+**Status:** Backlog - Needs Production Testing First  
+**Risk Level:** Low (standard optimization practices)
+
+**Success Metrics:**
+- TBD after production build baseline
+- Target: < 1s JavaScript execution time
+- Target: < 3s main-thread work
+
+---
+
+### 9. Main-Thread Work Optimization
+
+**Description:**  
+Reduce blocking main-thread work to improve application responsiveness and user experience.
+
+**Current Breakdown (from Lighthouse - Development Build):**
+- Other: 2,037ms
+- Script Evaluation: 1,429ms
+- Rendering: 766ms
+- Style & Layout: 142ms
+- Garbage Collection: 69ms
+
+**Note:** Current metrics are from development build. Production build testing required to establish actual baseline performance before implementing optimizations.
+
+**Next Steps:**
+1. **Baseline Production Performance:**
+   - Run Lighthouse on production build first
+   - Establish actual rendering/main-thread metrics
+   - Development build overhead likely inflates these numbers
+
+2. **Rendering Optimization (if needed after prod testing):**
+   - Implement virtual scrolling for large transaction tables
+   - Reduce unnecessary DOM manipulations
+   - Optimize CSS selectors and reduce style recalculations
+
+3. **Offload Heavy Computations (if needed after prod testing):**
+   - Move data processing to Web Workers where applicable
+   - Use requestIdleCallback for non-critical work
+   - Debounce/throttle expensive operations (table filtering, search)
+
+4. **Reduce Garbage Collection (if needed after prod testing):**
+   - Minimize object creation in hot paths
+   - Reuse objects where possible
+   - Avoid memory leaks from event listeners and subscriptions
+
+**Priority:** Low (blocked until production baseline established)  
+**Status:** Backlog - Needs Production Testing First  
+**Risk Level:** Low-Medium (requires careful testing of rendering changes)
+
+**Dependencies:** Should evaluate after Feature #8 (production baseline)
+
+**Success Metrics:**
+- TBD after production build baseline
+- Target: < 3s main-thread work
+- Target: Smooth interactions with no janky scrolling or input lag
 
 ---
 

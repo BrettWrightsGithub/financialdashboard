@@ -1,7 +1,20 @@
 ---
 description: Implement bulk editing and review queue for uncategorized/low-confidence transactions per `docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md` (FR-11, FR-13).
 auto_execution_mode: 1
+status: COMPLETED
+completed_date: 2026-01-02
 ---
+
+## Completion Summary
+
+**Done.** Implemented Review Queue and Bulk Edit features:
+- Created `lib/categorization/reviewQueue.ts` with queue filtering (uncategorized, low confidence, large Plaid)
+- Created `lib/categorization/bulkEdit.ts` with bulk assign category, update flags, approve
+- Added API routes: `/api/review-queue` and `/api/transactions/bulk-edit`
+- Built Review Queue page with stats cards, sorting, checkboxes, bulk action bar
+- Added navbar badge showing count of transactions needing review (refreshes every 30s)
+- 22 tests passing (10 for review queue, 12 for splitting)
+- Documented in `docs/categorization/bulk_edit_review_queue.md`
 
 ## Testing Reference
 

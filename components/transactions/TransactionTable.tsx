@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { formatCurrencyPrecise } from "@/lib/cashflow";
 import { updateTransactionCategory, updateTransactionFlags } from "@/lib/queries";
 import { CategorySourceBadge } from "./CategorySourceBadge";
+import { SplitModal } from "./SplitModal";
 import type { TransactionWithDetails, Category } from "@/types/database";
 
 interface TransactionTableProps {
@@ -13,6 +14,47 @@ interface TransactionTableProps {
 }
 
 export function TransactionTable({ transactions, categories, onTransactionUpdate }: TransactionTableProps) {
+  const [splitModalTransaction, setSplitModalTransaction] = useState<TransactionWithDetails | null>(null);
+
+  // Group transactions: parents with their children
+  const groupedTransactions = useMemo(() => {
+    // Build a map of parent -> children
+    const childrenByParent: Record<string, TransactionWithDetails[]> = {};
+    for (const t of transactions) {
+      if (t.parent_transaction_id) {
+        if (!childrenByParent[t.parent_transaction_id]) {
+          childrenByParent[t.parent_transaction_id] = [];
+        }
+        childrenByParent[t.parent_transaction_id].push(t);
+      }
+    }
+
+    // Return transactions that are not children (parents and standalone)
+    // Children will be rendered inline under their parent
+    const result: { transaction: TransactionWithDetails; children: TransactionWithDetails[] }[] = [];
+    for (const t of transactions) {
+      if (!t.is_split_child) {
+        result.push({
+          transaction: t,
+          children: childrenByParent[t.id] || [],
+        });
+      }
+    }
+    return result;
+  }, [transactions]);
+
+  const handleUnsplit = async (parentId: string) => {
+    try {
+      const res = await fetch(`/api/transactions/split?parent_id=${parentId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        onTransactionUpdate?.();
+      }
+    } catch (error) {
+      console.error("Failed to unsplit:", error);
+    }
+  };
 
   return (
     <div className="card overflow-hidden">
@@ -26,28 +68,57 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
               <th className="px-4 py-3">Account</th>
               <th className="px-4 py-3 text-right">Amount</th>
               <th className="px-4 py-3 text-center">Flags</th>
+              <th className="px-4 py-3 text-center">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-            {transactions.length === 0 ? (
+            {groupedTransactions.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
                   No transactions found matching your filters.
                 </td>
               </tr>
             ) : (
-              transactions.map((transaction) => (
-                <TransactionRow
-                  key={transaction.id}
-                  transaction={transaction}
-                  categories={categories}
-                  onUpdate={onTransactionUpdate}
-                />
+              groupedTransactions.map(({ transaction, children }) => (
+                <>
+                  <TransactionRow
+                    key={transaction.id}
+                    transaction={transaction}
+                    categories={categories}
+                    onUpdate={onTransactionUpdate}
+                    onSplit={() => setSplitModalTransaction(transaction)}
+                    onUnsplit={() => handleUnsplit(transaction.id)}
+                    isSplitParent={transaction.is_split_parent}
+                  />
+                  {children.map((child) => (
+                    <TransactionRow
+                      key={child.id}
+                      transaction={child}
+                      categories={categories}
+                      onUpdate={onTransactionUpdate}
+                      isChild
+                    />
+                  ))}
+                </>
               ))
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Split Modal */}
+      {splitModalTransaction && (
+        <SplitModal
+          transaction={splitModalTransaction}
+          categories={categories}
+          isOpen={!!splitModalTransaction}
+          onClose={() => setSplitModalTransaction(null)}
+          onSplitComplete={() => {
+            setSplitModalTransaction(null);
+            onTransactionUpdate?.();
+          }}
+        />
+      )}
 
       {/* Pagination placeholder */}
       {transactions.length > 0 && (
@@ -66,10 +137,18 @@ function TransactionRow({
   transaction,
   categories,
   onUpdate,
+  onSplit,
+  onUnsplit,
+  isSplitParent,
+  isChild,
 }: {
   transaction: TransactionWithDetails;
   categories: Category[];
   onUpdate?: () => void;
+  onSplit?: () => void;
+  onUnsplit?: () => void;
+  isSplitParent?: boolean;
+  isChild?: boolean;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(transaction.life_category_id);
@@ -122,7 +201,9 @@ function TransactionRow({
   };
 
   return (
-    <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+    <tr className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
+      isChild ? "bg-slate-50/50 dark:bg-slate-900/50" : ""
+    } ${isSplitParent ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`}>
       {/* Date */}
       <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300 whitespace-nowrap">
         {new Date(transaction.date).toLocaleDateString("en-US", {
@@ -133,7 +214,17 @@ function TransactionRow({
 
       {/* Description */}
       <td className="px-4 py-3">
-        <div className="text-sm font-medium text-slate-900 dark:text-white">
+        <div className={`text-sm font-medium text-slate-900 dark:text-white flex items-center gap-2 ${
+          isChild ? "pl-4" : ""
+        }`}>
+          {isChild && (
+            <span className="text-slate-400 dark:text-slate-500">↳</span>
+          )}
+          {isSplitParent && (
+            <span className="text-xs px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 rounded" title="Split parent - excluded from totals">
+              SPLIT
+            </span>
+          )}
           {transaction.description_clean || transaction.description_raw}
         </div>
         {transaction.counterparty_name && (
@@ -227,6 +318,30 @@ function TransactionRow({
           >
             B
           </button>
+        </div>
+      </td>
+
+      {/* Actions */}
+      <td className="px-4 py-3">
+        <div className="flex justify-center gap-1">
+          {!isChild && !isSplitParent && (
+            <button
+              onClick={onSplit}
+              className="px-2 py-1 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded"
+              title="Split transaction into multiple categories"
+            >
+              Split
+            </button>
+          )}
+          {isSplitParent && (
+            <button
+              onClick={onUnsplit}
+              className="px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+              title="Remove splits and restore original transaction"
+            >
+              Unsplit
+            </button>
+          )}
         </div>
       </td>
     </tr>

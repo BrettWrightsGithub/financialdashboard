@@ -221,6 +221,7 @@ Master ledger joining Teller, Plaid, Venmo, manual entries.
 | reimbursement_of_id     | uuid        | YES      | —                 | FK → transactions.id. Links reimbursement to original. |
 | parent_transaction_id   | uuid        | YES      | —                 | FK → transactions.id. For split transactions. |
 | is_split_child          | boolean     | YES      | false             | TRUE if this is a split child. |
+| is_split_parent         | boolean     | YES      | false             | TRUE if this transaction has been split. Excluded from cashflow and sync. |
 | applied_rule_id         | uuid        | YES      | —                 | FK → categorization_rules.id. Rule that categorized this. |
 | category_batch_id       | uuid        | YES      | —                 | FK → category_batches.id. |
 | category_confidence     | numeric     | YES      | —                 | Categorization confidence (0–1). |

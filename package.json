@@ -7,27 +7,31 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "jest",
     "pilot:export": "tsx --env-file=.env.local scripts/export_pilot_transactions.ts",
     "pilot:generate-ground-truth": "tsx --env-file=.env.local scripts/generate_ground_truth.ts",
     "pilot:analyze": "tsx --env-file=.env.local scripts/analyze_plaid_accuracy.ts",
     "pilot:simulate": "tsx --env-file=.env.local scripts/simulate_rules.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.46.2",
     "next": "^15.0.3",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@supabase/supabase-js": "^2.46.2"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "tsx": "^4.7.0",
+    "@types/jest": "^30.0.0",
     "@types/node": "^22.9.3",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "typescript": "^5.6.3",
-    "tailwindcss": "^3.4.15",
-    "postcss": "^8.4.49",
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
-    "eslint-config-next": "^15.0.3"
+    "eslint-config-next": "^15.0.3",
+    "jest": "^30.2.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "ts-jest": "^29.4.6",
+    "tsx": "^4.7.0",
+    "typescript": "^5.6.3"
   }
 }

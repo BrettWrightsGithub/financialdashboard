@@ -353,7 +353,8 @@ export async function getDashboardData(month: string) {
   };
 
   for (const t of transactions) {
-    if (t.is_transfer) continue;
+    // Skip transfers and split parents (children are counted instead)
+    if (t.is_transfer || t.is_split_parent) continue;
 
     const amount = t.amount;
     switch (t.cashflow_group) {
@@ -411,7 +412,8 @@ export async function getDashboardData(month: string) {
         t.date >= weekStartStr &&
         t.cashflow_group === "Discretionary" &&
         !t.is_transfer &&
-        !t.is_pass_through
+        !t.is_pass_through &&
+        !t.is_split_parent
     )
     .reduce((sum, t) => sum + Math.abs(t.amount), 0);
 

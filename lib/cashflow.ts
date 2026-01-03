@@ -8,6 +8,7 @@ import type { Transaction, CashflowSummary, BudgetTarget } from "@/types/databas
 /**
  * Calculate monthly net cashflow from transactions
  * Excludes transfers (is_transfer = true)
+ * Excludes split parents (their children are counted instead)
  * Includes only accounts with include_in_cashflow = true (assumed pre-filtered)
  */
 export function calculateMonthlyCashflow(
@@ -15,9 +16,15 @@ export function calculateMonthlyCashflow(
   month: string // YYYY-MM format
 ): CashflowSummary {
   // Filter to only posted, non-transfer transactions for the given month
+  // Exclude split parents - their children will be counted instead
   const monthTransactions = transactions.filter((t) => {
     const txMonth = t.date.substring(0, 7);
-    return txMonth === month && t.status === "posted" && !t.is_transfer;
+    return (
+      txMonth === month &&
+      t.status === "posted" &&
+      !t.is_transfer &&
+      !t.is_split_parent // Explicit flag - parent was split, use children instead
+    );
   });
 
   // Sum by cashflow group
@@ -86,6 +93,7 @@ export function calculateMonthlyCashflow(
  * Excludes:
  * - Transfers (is_transfer = true)
  * - Pass-through expenses (is_pass_through = true)
+ * - Split parents (their children are counted instead)
  */
 export function calculateSafeToSpend(
   transactions: Transaction[],
@@ -122,6 +130,7 @@ export function calculateSafeToSpend(
       t.cashflow_group === "Discretionary" &&
       !t.is_transfer &&
       !t.is_pass_through &&
+      !t.is_split_parent && // Explicit flag
       t.status === "posted"
     );
   });

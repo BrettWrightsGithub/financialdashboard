@@ -92,8 +92,18 @@ export interface Transaction {
   is_pass_through: boolean;
   is_business: boolean;
   category_source: string | null;
+  parent_transaction_id: string | null;
+  is_split_child: boolean;
+  is_split_parent: boolean;
   created_at: string;
   updated_at: string;
+}
+
+// Split input for creating child transactions
+export interface SplitInput {
+  amount: number;
+  category_id: string;
+  description?: string;
 }
 
 // Transaction with joined data (from v_transactions_with_details view or manual joins)
@@ -101,6 +111,7 @@ export interface TransactionWithDetails extends Transaction {
   account_name?: string;
   institution_name?: string;
   category_name?: string;
+  category_confidence?: number | null;
 }
 
 // Counterparty from counterparties table

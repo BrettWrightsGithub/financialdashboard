@@ -103,9 +103,14 @@ Master ledger from Teller, Plaid, Venmo (Gmail), and manual entries.
 | life_category_id       | uuid       | FK → categories.id (final chosen category). |
 | cashflow_group         | text       | Denorm from categories.cashflow_group. |
 | flow_type              | text       | Denorm from categories.flow_type (`Income`/`Expense`/`Transfer`). |
-| category_ai            | text       | AI-suggested category name. |
-| category_ai_conf       | numeric    | 0–1 confidence. |
-| category_locked        | boolean    | TRUE once user manually overrides; AI must not change. |
+| category_source        | text       | `plaid`, `rule`, `manual`, `payee_memory` (how category was assigned). |
+| category_confidence    | numeric    | 0–1 confidence score for categorization. |
+| category_locked        | boolean    | TRUE once user manually overrides; rules/AI must not change. |
+| applied_rule_id        | uuid       | FK → categorization_rules.id (nullable, tracks which rule applied). |
+| pending_transaction_id | text       | Links pending transaction to posted for category handover. |
+| reimbursement_of_id    | uuid       | FK → transactions.id (links reimbursement to original expense). |
+| parent_transaction_id  | uuid       | FK → transactions.id (for split transactions). |
+| is_split_parent        | boolean    | TRUE if transaction has been split into children. |
 | status                 | text       | `posted` / `pending`. |
 | provider_type          | text       | Teller `type` (`card_payment`, `transfer`), Plaid transaction type, etc. |
 | processing_status      | text       | Teller `details.processing_status` (`pending`/`complete`). |

@@ -2,11 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { formatCurrency } from "@/lib/cashflow";
-import { getBudgetSummary } from "@/lib/queries";
-import type { BudgetSummary, CashflowGroup } from "@/types/database";
+import { getBudgetSummary, getActualsByCategory, getThreeMonthAverage, upsertBudgetTarget, deleteBudgetTarget } from "@/lib/queries";
+import { InlineEditCell } from "./InlineEditCell";
+import { AddCategoryDropdown } from "./AddCategoryDropdown";
+import type { BudgetSummary, CashflowGroup, Category } from "@/types/database";
 
 interface BudgetTableProps {
   month: string; // YYYY-MM format
+  categories?: Category[];
+  onCategoryAdd?: (category: Category) => Promise<void>;
+  onResetToActuals?: () => Promise<void>;
 }
 
 const GROUP_ORDER: CashflowGroup[] = [
@@ -18,52 +23,82 @@ const GROUP_ORDER: CashflowGroup[] = [
   "Savings/Investing",
 ];
 
-export function BudgetTable({ month }: BudgetTableProps) {
+export function BudgetTable({ month, categories = [], onCategoryAdd, onResetToActuals }: BudgetTableProps) {
   const [loading, setLoading] = useState(true);
   const [budgetData, setBudgetData] = useState<BudgetSummary[]>([]);
+  const [lastMonthActuals, setLastMonthActuals] = useState<Record<string, number>>({});
+  const [threeMonthAverages, setThreeMonthAverages] = useState<Record<string, number>>({});
 
   useEffect(() => {
     async function fetchBudgetData() {
       setLoading(true);
       try {
-        const { categories, targets, actuals, actualsByCashflowGroup } = await getBudgetSummary(month);
+        const [summary, lastMonth, threeMonth] = await Promise.all([
+          getBudgetSummary(month),
+          getActualsByCategory(getPreviousMonth(month)),
+          getThreeMonthAverage(month)
+        ]);
 
         // Build a map of category_id -> actual spending
         const actualsMap: Record<string, number> = {};
-        for (const a of actuals) {
+        for (const a of summary.actuals) {
           actualsMap[a.category_id] = a.total;
         }
 
         // Build a map of cashflow_group -> actual spending (fallback)
         const cashflowGroupActualsMap: Record<string, number> = {};
-        for (const a of actualsByCashflowGroup) {
+        for (const a of summary.actualsByCashflowGroup) {
           cashflowGroupActualsMap[a.cashflow_group] = a.total;
         }
 
         // Build a map of category_id -> budget target
         const targetsMap: Record<string, number> = {};
-        for (const t of targets) {
+        for (const t of summary.targets) {
           targetsMap[t.category_id] = t.amount;
         }
+
+        // Build maps for historical data
+        const lastMonthMap: Record<string, number> = {};
+        for (const actual of lastMonth) {
+          lastMonthMap[actual.category_id] = actual.total;
+        }
+
+        const threeMonthMap: Record<string, number> = {};
+        for (const avg of threeMonth) {
+          threeMonthMap[avg.category_id] = avg.average;
+        }
+
+        setLastMonthActuals(lastMonthMap);
+        setThreeMonthAverages(threeMonthMap);
 
         // Build budget summary for each category that has a target
         const summaries: BudgetSummary[] = [];
 
-        for (const cat of categories) {
+        for (const cat of summary.categories) {
           const expected = targetsMap[cat.id] || 0;
           // Skip categories with no budget target
           if (expected === 0) continue;
 
-          // Get actual from direct category match, or fallback to 0
-          const actual = actualsMap[cat.id] || 0;
-          const variance = actual - expected;
-          const percentUsed = expected > 0 ? Math.round((actual / expected) * 100) : 0;
+          // Get actual from direct category match (signed sum from backend)
+          const actualSigned = actualsMap[cat.id] || 0;
+          
+          // For display: Income stays positive, expenses use absolute value
+          // Note: Refunds are positive amounts in expense categories, so Math.abs() correctly reduces spending
+          const isIncome = cat.cashflow_group === "Income";
+          const actual = isIncome ? actualSigned : Math.abs(actualSigned);
+          const expectedAbs = Math.abs(expected);
+          
+          // Variance calculation depends on category type
+          // For expenses: negative actual (after abs) means less spent = good
+          // For income: positive actual means more earned = good
+          const variance = isIncome ? actual - expectedAbs : expectedAbs - actual;
+          const percentUsed = expectedAbs > 0 ? Math.round((actual / expectedAbs) * 100) : 0;
 
           summaries.push({
             categoryId: cat.id,
             categoryName: cat.name,
             cashflowGroup: cat.cashflow_group,
-            expected,
+            expected: expectedAbs,
             actual,
             variance,
             percentUsed,
@@ -81,6 +116,56 @@ export function BudgetTable({ month }: BudgetTableProps) {
 
     fetchBudgetData();
   }, [month]);
+
+  // Helper function to get previous month
+  function getPreviousMonth(currentMonth: string): string {
+    const [year, month] = currentMonth.split("-").map(Number);
+    const prevMonth = month === 1 ? 12 : month - 1;
+    const prevYear = month === 1 ? year - 1 : year;
+    return `${prevYear}-${String(prevMonth).padStart(2, "0")}`;
+  }
+
+  // Handle budget amount updates
+  const handleBudgetUpdate = async (categoryId: string, newAmount: number) => {
+    try {
+      await upsertBudgetTarget(categoryId, month, newAmount);
+      
+      // Update local state
+      setBudgetData(prev => 
+        prev.map(item => 
+          item.categoryId === categoryId 
+            ? { ...item, expected: newAmount }
+            : item
+        )
+      );
+    } catch (error) {
+      console.error("Error updating budget:", error);
+      throw error;
+    }
+  };
+
+  // Handle category removal
+  const handleCategoryRemove = async (categoryId: string) => {
+    if (!confirm("Are you sure you want to remove this category from the budget?")) {
+      return;
+    }
+
+    try {
+      // Find the budget target to delete
+      const response = await fetch(`/api/budget-targets?month=${month}`);
+      const { data } = await response.json();
+      const targetToDelete = data.find((t: any) => t.category_id === categoryId);
+      
+      if (targetToDelete) {
+        await deleteBudgetTarget(targetToDelete.id);
+        
+        // Update local state
+        setBudgetData(prev => prev.filter(item => item.categoryId !== categoryId));
+      }
+    } catch (error) {
+      console.error("Error removing category:", error);
+    }
+  };
 
   // Group data by cashflow group
   const groupedData = GROUP_ORDER.map((group) => ({
@@ -142,6 +227,30 @@ export function BudgetTable({ month }: BudgetTableProps) {
 
   return (
     <div className="space-y-6">
+      {/* Header Actions */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Budget Targets</h2>
+        <div className="flex gap-3">
+          {onResetToActuals && (
+            <button
+              onClick={onResetToActuals}
+              className="px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300
+                       hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md
+                       transition-colors duration-150 ease-in-out"
+            >
+              Reset to Actuals
+            </button>
+          )}
+          {onCategoryAdd && (
+            <AddCategoryDropdown 
+              month={month} 
+              existingCategoryIds={budgetData.map(item => item.categoryId)}
+              onCategoryAdd={onCategoryAdd}
+            />
+          )}
+        </div>
+      </div>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SummaryCard
@@ -173,25 +282,57 @@ export function BudgetTable({ month }: BudgetTableProps) {
             <thead>
               <tr className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                 <th className="px-4 py-3">Category</th>
+                <th className="px-4 py-3 text-right">Last Month</th>
+                <th className="px-4 py-3 text-right">3-Mo Avg</th>
                 <th className="px-4 py-3 text-right">Expected</th>
                 <th className="px-4 py-3 text-right">Actual</th>
+                <th className="px-4 py-3 text-right">Remaining</th>
                 <th className="px-4 py-3 text-right">Variance</th>
                 <th className="px-4 py-3 w-32">Progress</th>
+                <th className="px-4 py-3 w-8"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-              {items.map((item) => (
-                <BudgetRow key={item.categoryId} item={item} isIncome={group === "Income"} />
+              {items.map((item, index) => (
+                <BudgetRow 
+                  key={item.categoryId} 
+                  item={item} 
+                  isIncome={group === "Income"}
+                  lastMonthActual={lastMonthActuals[item.categoryId] || 0}
+                  threeMonthAverage={threeMonthAverages[item.categoryId] || 0}
+                  onBudgetUpdate={(amount) => handleBudgetUpdate(item.categoryId, amount)}
+                  onRemove={() => handleCategoryRemove(item.categoryId)}
+                  testId={`budget-amount-${index}`}
+                />
               ))}
             </tbody>
             <tfoot className="bg-slate-50 dark:bg-slate-800">
               <tr className="font-medium">
                 <td className="px-4 py-3 text-slate-900 dark:text-white">Subtotal</td>
+                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-300">
+                  {formatCurrency(items.reduce((s, i) => s + (lastMonthActuals[i.categoryId] || 0), 0))}
+                </td>
+                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-300">
+                  {formatCurrency(items.reduce((s, i) => s + (threeMonthAverages[i.categoryId] || 0), 0))}
+                </td>
                 <td className="px-4 py-3 text-right text-slate-900 dark:text-white">
                   {formatCurrency(items.reduce((s, i) => s + i.expected, 0))}
                 </td>
                 <td className="px-4 py-3 text-right text-slate-900 dark:text-white">
                   {formatCurrency(items.reduce((s, i) => s + i.actual, 0))}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <span className={`text-sm font-medium ${
+                    group === "Income" 
+                      ? items.reduce((s, i) => s + (i.expected - i.actual), 0) >= 0 
+                        ? "text-green-600 dark:text-green-400" 
+                        : "text-red-600 dark:text-red-400"
+                      : items.reduce((s, i) => s + (i.expected - i.actual), 0) >= 0
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-red-600 dark:text-red-400"
+                  }`}>
+                    {formatCurrency(items.reduce((s, i) => s + (i.expected - i.actual), 0))}
+                  </span>
                 </td>
                 <td className="px-4 py-3 text-right">
                   <VarianceCell variance={items.reduce((s, i) => s + i.variance, 0)} isIncome={group === "Income"} />
@@ -247,7 +388,23 @@ function SummaryCard({
   );
 }
 
-function BudgetRow({ item, isIncome }: { item: BudgetSummary; isIncome: boolean }) {
+function BudgetRow({ 
+  item, 
+  isIncome, 
+  lastMonthActual, 
+  threeMonthAverage, 
+  onBudgetUpdate, 
+  onRemove,
+  testId 
+}: { 
+  item: BudgetSummary; 
+  isIncome: boolean;
+  lastMonthActual: number;
+  threeMonthAverage: number;
+  onBudgetUpdate: (amount: number) => Promise<void>;
+  onRemove: () => void;
+  testId?: string;
+}) {
   // For expenses, over budget is bad (red). For income, under expected is bad.
   const isOverBudget = isIncome ? item.actual < item.expected : item.actual > item.expected;
   const progressColor = isOverBudget
@@ -256,16 +413,41 @@ function BudgetRow({ item, isIncome }: { item: BudgetSummary; isIncome: boolean 
     ? "bg-yellow-500"
     : "bg-green-500";
 
+  const remaining = item.expected - item.actual;
+
   return (
     <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
       <td className="px-4 py-3 text-sm text-slate-900 dark:text-white">
         {item.categoryName}
       </td>
       <td className="px-4 py-3 text-sm text-right text-slate-600 dark:text-slate-300">
-        {formatCurrency(item.expected)}
+        {formatCurrency(isIncome ? lastMonthActual : Math.abs(lastMonthActual))}
+      </td>
+      <td className="px-4 py-3 text-sm text-right text-slate-600 dark:text-slate-300">
+        {formatCurrency(threeMonthAverage)}
+      </td>
+      <td className="px-4 py-3 text-sm text-right">
+        <InlineEditCell
+          value={item.expected}
+          onSave={onBudgetUpdate}
+          testId={testId}
+        />
       </td>
       <td className="px-4 py-3 text-sm text-right text-slate-900 dark:text-white font-medium">
         {formatCurrency(item.actual)}
+      </td>
+      <td className="px-4 py-3 text-sm text-right">
+        <span className={`text-sm font-medium ${
+          isIncome 
+            ? remaining >= 0 
+              ? "text-green-600 dark:text-green-400" 
+              : "text-red-600 dark:text-red-400"
+            : remaining >= 0
+              ? "text-green-600 dark:text-green-400"
+              : "text-red-600 dark:text-red-400"
+        }`}>
+          {formatCurrency(remaining)}
+        </span>
       </td>
       <td className="px-4 py-3 text-sm text-right">
         <VarianceCell variance={item.variance} isIncome={isIncome} />
@@ -282,6 +464,18 @@ function BudgetRow({ item, isIncome }: { item: BudgetSummary; isIncome: boolean 
             {item.percentUsed}%
           </span>
         </div>
+      </td>
+      <td className="px-4 py-3">
+        <button
+          onClick={onRemove}
+          className="p-1 text-slate-400 hover:text-red-600 dark:hover:text-red-400
+                   transition-colors duration-150 ease-in-out"
+          title="Remove from budget"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
       </td>
     </tr>
   );

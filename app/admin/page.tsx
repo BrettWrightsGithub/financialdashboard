@@ -3,6 +3,22 @@
 import { useState, useEffect, useCallback } from "react";
 import type { HealthReport } from "@/lib/health";
 
+function getTablesFromDetails(
+  details: Record<string, unknown> | undefined
+): Record<string, boolean> | null {
+  const tablesUnknown = details?.["tables"];
+  if (!tablesUnknown || typeof tablesUnknown !== "object" || Array.isArray(tablesUnknown)) {
+    return null;
+  }
+
+  const tables = tablesUnknown as Record<string, unknown>;
+  const result: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(tables)) {
+    if (typeof v === "boolean") result[k] = v;
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 export default function AdminPage() {
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -148,11 +164,12 @@ export default function AdminPage() {
 
                 {check.details && (
                   <div className="mt-3 text-sm">
-                    {check.details.tables && (
+                    {(() => {
+                      const tables = getTablesFromDetails(check.details);
+                      if (!tables) return null;
+                      return (
                       <div className="flex flex-wrap gap-2">
-                        {Object.entries(
-                          check.details.tables as Record<string, boolean>
-                        ).map(([table, ok]) => (
+                        {Object.entries(tables).map(([table, ok]) => (
                           <span
                             key={table}
                             className={`px-2 py-1 rounded text-xs font-mono ${
@@ -165,7 +182,8 @@ export default function AdminPage() {
                           </span>
                         ))}
                       </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 )}
               </div>

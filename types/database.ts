@@ -59,11 +59,13 @@ export interface Account {
 export interface Category {
   id: string;
   name: string;
-  life_group: string;
-  flow_type: FlowType;
   cashflow_group: CashflowGroup;
-  is_active: boolean;
+  description: string | null;
+  color: string | null;
+  icon: string | null;
   sort_order: number;
+  is_active: boolean;
+  created_at: string;
 }
 
 // Transaction from transactions table
@@ -142,6 +144,14 @@ export interface ExpectedInflow {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  // Joined data from API responses
+  categories?: Category | null;
+  counterparties?: {
+    id: string;
+    name: string;
+    type: string;
+    notes: string | null;
+  } | null;
 }
 
 // Budget Target from budget_targets table

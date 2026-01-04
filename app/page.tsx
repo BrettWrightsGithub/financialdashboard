@@ -5,7 +5,10 @@ import { SafeToSpendCard } from "@/components/dashboard/SafeToSpendCard";
 import { CashflowCard } from "@/components/dashboard/CashflowCard";
 import { OutstandingInflowsCard } from "@/components/dashboard/OutstandingInflowsCard";
 import { AlertsCard, type Alert } from "@/components/dashboard/AlertsCard";
-import { getDashboardData, getExpectedInflows } from "@/lib/queries";
+import { CashflowTrendCard } from "@/components/dashboard/CashflowTrendCard";
+import { OverspentCategoriesCard } from "@/components/dashboard/OverspentCategoriesCard";
+import { MonthSelector } from "@/components/budget/MonthSelector";
+import { getDashboardData, getExpectedInflows, getCashflowTrend, getOverspentCategories } from "@/lib/queries";
 import { getCurrentMonth, formatCurrency } from "@/lib/cashflow";
 import type { ExpectedInflow } from "@/types/database";
 
@@ -28,6 +31,7 @@ interface DashboardData {
     monthlyBudget: number;
   };
   outstandingInflows: ExpectedInflow[];
+  transactions: any[];
 }
 
 export default function DashboardPage() {
@@ -35,18 +39,24 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [inflows, setInflows] = useState<ExpectedInflow[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  const currentMonth = getCurrentMonth();
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
+  const [trendData, setTrendData] = useState<{ month: string; net: number }[]>([]);
+  const [overspentCategories, setOverspentCategories] = useState<any[]>([]);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [dashboardData, inflowsData] = await Promise.all([
-          getDashboardData(currentMonth),
-          getExpectedInflows(currentMonth),
+        const [dashboardData, inflowsData, trend, overspent] = await Promise.all([
+          getDashboardData(selectedMonth),
+          getExpectedInflows(selectedMonth),
+          getCashflowTrend(6),
+          getOverspentCategories(selectedMonth, 3),
         ]);
 
         setData(dashboardData);
         setInflows(inflowsData);
+        setTrendData(trend);
+        setOverspentCategories(overspent);
 
         // Generate alerts based on data
         const newAlerts: Alert[] = [];
@@ -98,7 +108,7 @@ export default function DashboardPage() {
     }
 
     fetchData();
-  }, [currentMonth]);
+  }, [selectedMonth]);
 
   if (loading) {
     return (
@@ -122,11 +132,14 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Dashboard</h1>
-        <p className="text-slate-600 dark:text-slate-400 mt-1">
-          Your financial overview at a glance
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Dashboard</h1>
+          <p className="text-slate-600 dark:text-slate-400 mt-1">
+            Your financial overview at a glance
+          </p>
+        </div>
+        <MonthSelector value={selectedMonth} onChange={setSelectedMonth} />
       </div>
 
       {/* Main Stats Grid */}
@@ -143,7 +156,7 @@ export default function DashboardPage() {
         {/* Monthly Cashflow */}
         <div className="lg:col-span-1">
           <CashflowCard
-            currentMonth={currentMonth}
+            currentMonth={selectedMonth}
             income={data?.cashflow.income || 0}
             expenses={data?.totalExpenses || 0}
             netCashflow={data?.netCashflow || 0}
@@ -153,6 +166,19 @@ export default function DashboardPage() {
         {/* Outstanding Inflows */}
         <div className="lg:col-span-1">
           <OutstandingInflowsCard inflows={inflows} />
+        </div>
+      </div>
+
+      {/* Secondary Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Cashflow Trend */}
+        <div>
+          <CashflowTrendCard trend={trendData} />
+        </div>
+
+        {/* Overspent Categories */}
+        <div>
+          <OverspentCategoriesCard categories={overspentCategories} />
         </div>
       </div>
 

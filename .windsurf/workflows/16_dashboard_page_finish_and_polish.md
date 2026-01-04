@@ -9,6 +9,15 @@ auto_execution_mode: 1
 - `docs/db-schema.md` (`transactions`, `accounts`, `budget_targets`, `categories`, `expected_inflows`)
 - `.windsurf/paths/cashflow-calculations.md`
 
+## Database interaction rules (must follow)
+
+- **Read-only first:** Use Supabase MCP read tools to inspect tables/columns and run `SELECT` queries before proposing any writes.
+- **Schema changes:** If you add/alter a table, column, index, view, function, or RPC:
+  - Update `docs/db-schema.md` in the same change set.
+  - Add a new migration under `supabase/migrations/` (never ad-hoc DDL).
+  - Re-generate types if your workflow includes that step.
+- **Writes require intent:** Any `INSERT`/`UPDATE`/`DELETE`/migration should be explicitly called out as a user-confirm step.
+
 ## Current implementation (starting point)
 
 - Dashboard route: `app/page.tsx` (nav points Dashboard to `/`)
@@ -31,6 +40,42 @@ auto_execution_mode: 1
    - exclude `is_transfer = TRUE`
    - exclude `is_split_parent = TRUE`
    - handle refunds correctly (do not `abs()` during aggregation)
+
+## Testing plan (frontend + backend)
+
+- **Unit tests (automated, checked into repo):**
+  - Use `vitest` (`npm run test`).
+  - Focus on pure functions/helpers (e.g., monthly aggregation, overspent computation, refund handling, split-parent exclusion).
+  - Add/extend tests under `lib/` (keep logic pure where possible so it’s testable without Supabase).
+- **Backend verification (automated via Supabase MCP):**
+  - Use Supabase MCP to:
+    - Inspect schema (`list_tables`, optionally `list_extensions`).
+    - Run read-only `SELECT` sanity checks for a known month:
+      - Posted vs pending counts
+      - Transfers excluded
+      - Split parents excluded
+      - Cashflow accounts included
+- **UI smoke tests (manual by user):**
+  - Start the app (`npm run dev`).
+  - Visit `/`.
+  - Validate month selector switches data.
+  - Validate trend card appears and matches the cashflow card for current month.
+  - Validate overspent card renders top 3 (or shows a clear empty state).
+- **E2E automation with Playwright:**
+  - Use the Playwright MCP server for automated UI testing:
+    - `mcp1_browser_navigate` to visit `http://localhost:3000`
+    - `mcp1_browser_snapshot` to capture page state
+    - `mcp1_browser_click` to interact with month selector
+    - `mcp1_browser_wait_for` to wait for data updates
+    - `mcp1_browser_evaluate` to verify card values match expectations
+  - Example test flow:
+    1. Navigate to dashboard
+    2. Take snapshot to verify initial state
+    3. Click month selector, choose previous month
+    4. Wait for loading states to complete
+    5. Verify cashflow card shows different month
+    6. Verify trend chart displays historical data
+    7. Verify overspent categories update or show empty state 
 
 ## Steps
 
@@ -66,6 +111,19 @@ auto_execution_mode: 1
      - no budget targets -> overspent card should show a helpful message
      - no transactions -> trend card should show “No data”
 
+6. Add/extend unit tests
+   - Add tests that cover:
+     - refunds (positive amounts in expense categories)
+     - split-parent exclusion
+     - transfer exclusion
+     - cashflow account inclusion
+   - Run `npm run test`.
+
+7. Run backend sanity checks (Supabase MCP)
+   - Use the Supabase MCP server to:
+     - confirm required tables exist
+     - run a few `SELECT` queries for the current month to confirm filters are correct
+
 ## Success criteria (manual checklist)
 
 - Dashboard loads without console errors.
@@ -76,6 +134,11 @@ auto_execution_mode: 1
 - Trend chart shows 3–6 months and the current month matches the cashflow card.
 - Refund test:
   - add a positive transaction in an expense category and verify it reduces the month’s net spending and improves variance.
+
+## Finalization
+
+- When this workflow’s steps are complete and validated, rename this file to:
+  - `16_dashboard_page_finish_and_polish_COMPLETED.md`
 
 ## Optional follow-ups
 

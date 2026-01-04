@@ -1,1 +1,583 @@
-{"connections": {"accounts-Transactions": {"main": [[{"index": 0, "node": "Split Transactions Test1", "type": "main"}]]}, "getProviderData5": {"main": [[{"index": 0, "node": "Workflow Configuration", "type": "main"}]]}, "Loop Over Items": {"main": [[{"index": 0, "node": "logOutput", "type": "main"}], [{"index": 0, "node": "accounts-Transactions", "type": "main"}]]}, "Schedule Every 6-12 Hours": {"main": [[{"index": 0, "node": "getProviderData5", "type": "main"}]]}, "Split Transactions Test1": {"main": [[{"index": 0, "node": "transformAccounts", "type": "main"}]]}, "supabase_transactionsUpsert": {"main": [[{"index": 0, "node": "Loop Over Items", "type": "main"}]]}, "supabaseUpsertAccounts": {"main": [[{"index": 0, "node": "transactionTransform", "type": "main"}]]}, "transactionTransform": {"main": [[{"index": 0, "node": "supabase_transactionsUpsert", "type": "main"}]]}, "transformAccounts": {"main": [[{"index": 0, "node": "supabaseUpsertAccounts", "type": "main"}]]}, "Webhook": {"main": [[{"index": 0, "node": "getProviderData5", "type": "main"}]]}, "Workflow Configuration": {"main": [[{"index": 0, "node": "Loop Over Items", "type": "main"}]]}}, "meta": {"instanceId": "6b8070f56758ed070d4025219f0915bbf80b51f4ff99cdfcfaafdbcdea2eb129", "templateCredsSetupCompleted": true}, "nodes": [{"id": "c4adb583-3b18-4539-9cd1-2995319b6f23", "name": "Schedule Every 6-12 Hours", "parameters": {"rule": {"interval": [{"field": "hours", "hoursInterval": 6}]}}, "position": [-608, 1424], "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.3}, {"id": "7fa2d8b3-bdf6-4f46-9d56-dd8bf192aaaf", "name": "Workflow Configuration", "parameters": {"assignments": {"assignments": [{"id": "id-1", "name": "plaidClientId", "type": "string", "value": "=[redacted]"}, {"id": "id-2", "name": "plaidSecret", "type": "string", "value": "=[redacted]"}, {"id": "id-3", "name": "plaidAccessToken", "type": "string", "value": "={{ $json.access_token }}"}, {"id": "4e6d53fa-8a1a-4ff5-aa59-72d3ab154082", "name": "supabaseProjectId", "type": "string", "value": "[redacted]"}, {"id": "bef36273-1da8-45dd-91b1-3c164553f4fc", "name": "supabaseUrl", "type": "string", "value": "https://[redacted].supabase.co"}]}, "includeOtherFields": true, "options": {}}, "position": [-160, 1536], "type": "n8n-nodes-base.set", "typeVersion": 3.4}, {"credentials": {"supabaseApi": {"id": "Pik9yTKOmYDTsg3Y", "name": "supabase-FinancialDashboard"}}, "id": "96f30629-7057-4285-ba6d-72a8662dfc41", "name": "getProviderData5", "parameters": {"operation": "getAll", "tableId": "provider_connections"}, "position": [-384, 1536], "type": "n8n-nodes-base.supabase", "typeVersion": 1}, {"alwaysOutputData": true, "id": "971ff802-2f94-4922-af4d-3c44952701cd", "name": "Split Transactions Test1", "parameters": {"fieldsToInclude": "has_more,next_cursor", "fieldToSplitOut": "body.accounts", "include": "selectedOtherFields", "options": {}}, "position": [512, 1536], "type": "n8n-nodes-base.splitOut", "typeVersion": 1}, {"alwaysOutputData": false, "id": "4149f22f-189c-454d-af59-86705ee6c844", "name": "accounts-Transactions", "parameters": {"bodyParameters": {"parameters": [{}]}, "jsonBody": "={\n  \"client_id\": \"{{ $json.plaidClientId }}\",\n  \"secret\": \"{{ $json.plaidSecret }}\",\n  \"access_token\": \"{{ $json.plaidAccessToken }}\",\n  \"cursor\": \"\",\n  \"count\": 200\n}", "method": "POST", "options": {"batching": {"batch": {"batchInterval": 2000, "batchSize": 1}}, "pagination": {"pagination": {"completeExpression": "={{$response.body.has_more === false}}", "paginationCompleteWhen": "other", "parameters": {"parameters": [{"name": "cursor", "type": "body", "value": "={{$response.body.next_cursor}}"}]}, "requestInterval": 1000}}, "redirect": {"redirect": {"followRedirects": false}}, "response": {"response": {"fullResponse": true}}}, "sendBody": true, "specifyBody": "=json", "url": "https://production.plaid.com/transactions/sync"}, "position": [288, 1536], "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.3}, {"id": "2ed330c2-7eea-46d0-9a22-d6fc418f302e", "name": "transformAccounts", "parameters": {"jsCode": "// Your incoming items look like: { \"body.accounts\": { ... } }\nconst accounts = $input\n  .all()\n  .map(i => i.json[\"body.accounts\"])  // <-- THIS is the key fix\n  .filter(Boolean);\n\n// Optional: dedupe by provider_account_id so bulk upsert doesn't repeat rows\nconst seen = new Set();\n\nconst accountsToUpsert = accounts\n  .map(a => ({\n    provider: 'plaid',\n    provider_account_id: a.account_id,\n    name: a.name,\n    institution: $('Loop Over Items').first().json.institution_name, \n    account_type: a.subtype ?? a.type ?? null,\n    mask: a.mask ?? null,\n    balance_current: a.balances?.current ?? null,\n    balance_available: a.balances?.available ?? null,\n    include_in_cashflow: true,\n    is_active: true,\n    updated_at: new Date().toISOString(),\n  }))\n  .filter(r => {\n    // enforce required fields + dedupe\n    if (!r.provider_account_id || !r.name) return false;\n    const k = `${r.provider}:${r.provider_account_id}`;\n    if (seen.has(k)) return false;\n    seen.add(k);\n    return true;\n  });\n\nreturn [{ json: { accountsToUpsert } }];\n"}, "position": [736, 1536], "type": "n8n-nodes-base.code", "typeVersion": 2}, {"id": "974e4f31-9253-4b5b-95cc-286c00b87d2a", "name": "transactionTransform", "parameters": {"jsCode": "// transactionTransform (Run Once for All Items)\n// Current input: Supabase upsert response rows for accounts (each item has id + provider_account_id)\n// We also pull Plaid transactions from node: \"accounts-Transactions\"\n\nconst PLAID_NODE = 'accounts-Transactions';\n\n// 1) Build lookup: Plaid account_id -> Supabase accounts.id (uuid)\nconst accountRows = $input.all().map(i => i.json).filter(Boolean);\n\nconst accountLookup = new Map(\n  accountRows\n    .filter(r => r.provider_account_id && r.id)\n    .map(r => [r.provider_account_id, r.id])\n);\n\n// 2) Pull all Plaid \"added\" transactions from accounts-Transactions\nconst plaidItems = $items(PLAID_NODE);\n\nconst added = plaidItems\n  .flatMap(i => i.json.body?.added ?? [])\n  .filter(Boolean);\n\n// 3) Transform to public.transactions schema\nconst seen = new Set();\n\nconst transactionsToUpsert = added\n  .map(t => {\n    const provider = 'plaid';\n\n    const provider_account_id = t.account_id ?? null;  // Plaid account id\n    const account_id = provider_account_id ? accountLookup.get(provider_account_id) : null;\n\n    const provider_transaction_id = t.transaction_id ?? null;\n    const date = t.date ?? t.authorized_date ?? null; // YYYY-MM-DD\n    \n    // CRITICAL FIX: Negate Plaid amount to convert to standard convention\n    // Plaid: positive = money out (expenses), negative = money in (income)\n    // Standard: positive = money in (income), negative = money out (expenses)\n    const amount = (typeof t.amount === 'number') ? -t.amount : -Number(t.amount);\n\n    const counterparty_name =\n      t.merchant_name ??\n      t.counterparties?.[0]?.name ??\n      null;\n\n    const description_raw =\n      t.original_description ??\n      t.name ??\n      counterparty_name ??\n      null;\n\n    const description_clean =\n      t.name ??\n      counterparty_name ??\n      null;\n\n    const status = (t.pending === true) ? 'pending' : 'posted';\n\n    // --- PLAID CATEGORY ENRICHMENT ---\n    // Extract category from Plaid's personal_finance_category (preferred) or legacy category array\n    const category_ai = \n      t.personal_finance_category?.detailed ??\n      t.personal_finance_category?.primary ??\n      (Array.isArray(t.category) ? t.category.join(' > ') : null);\n\n    // Map Plaid confidence levels to numeric scores (0-100)\n    const confidenceMap = {\n      'VERY_HIGH': 95,\n      'HIGH': 85,\n      'MEDIUM': 70,\n      'LOW': 50\n    };\n    const category_ai_conf = \n      confidenceMap[t.personal_finance_category?.confidence_level] ?? \n      (Array.isArray(t.category) ? 60 : null); // Default 60 for legacy categories\n\n    // required fields\n    if (!provider_transaction_id || !account_id || !date || Number.isNaN(amount)) return null;\n\n    // dedupe\n    const k = `${provider}:${provider_transaction_id}`;\n    if (seen.has(k)) return null;\n    seen.add(k);\n\n    return {\n      provider,\n      provider_transaction_id,\n      account_id,               // REQUIRED FK uuid\n      provider_account_id,      // optional\n      date,                     // REQUIRED\n      amount,                   // REQUIRED - NOW NEGATED\n      description_raw,\n      description_clean,\n      counterparty_name,\n      provider_type: t.payment_channel ?? null,\n      status,\n      processing_status: 'complete',\n      category_ai,              // Plaid category suggestion\n      category_ai_conf,         // Plaid confidence (0-100)\n      updated_at: new Date().toISOString(),\n    };\n  })\n  .filter(Boolean);\n\nreturn [{\n  json: {\n    transactionsToUpsert,\n    count: transactionsToUpsert.length,\n  }\n}];\n"}, "position": [1184, 1536], "type": "n8n-nodes-base.code", "typeVersion": 2}, {"credentials": {"supabaseApi": {"id": "Pik9yTKOmYDTsg3Y", "name": "supabase-FinancialDashboard"}}, "id": "e66976ae-52ab-498b-9aa4-d87706d51e60", "name": "supabaseUpsertAccounts", "parameters": {"authentication": "predefinedCredentialType", "headerParameters": {"parameters": [{"name": "apikey", "value": "sb_publishable_hAViZp9o7rw7vb-sh5gEyw_KLRuJTUE"}, {"name": "Prefer", "value": "resolution=merge-duplicates, return=representation"}]}, "jsonBody": "={{ $json.accountsToUpsert }}", "method": "POST", "nodeCredentialType": "supabaseApi", "options": {"redirect": {"redirect": {}}}, "queryParameters": {"parameters": [{"name": "on_conflict", "value": "provider,provider_account_id"}, {"name": "select", "value": "id,provider,provider_account_id,name,balance_current,balance_available"}]}, "sendBody": true, "sendHeaders": true, "sendQuery": true, "specifyBody": "json", "url": "https://eknxbedvbvaircfcbdeo.supabase.co/rest/v1/accounts"}, "position": [960, 1536], "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.3}, {"credentials": {"supabaseApi": {"id": "Pik9yTKOmYDTsg3Y", "name": "supabase-FinancialDashboard"}}, "id": "c6e1fa12-6194-4008-9c10-ca3e339cafd7", "name": "supabase_transactionsUpsert", "parameters": {"authentication": "predefinedCredentialType", "headerParameters": {"parameters": [{"name": "Prefer", "value": "resolution=merge-duplicates, return=representation"}]}, "jsonBody": "={{ $json.transactionsToUpsert }}", "method": "POST", "nodeCredentialType": "supabaseApi", "options": {"redirect": {"redirect": {}}}, "queryParameters": {"parameters": [{"name": "on_conflict", "value": "provider,provider_transaction_id"}, {"name": "select", "value": "id,provider,provider_transaction_id,account_id,provider_account_id,date,amount,status"}]}, "sendBody": true, "sendHeaders": true, "sendQuery": true, "specifyBody": "json", "url": "https://eknxbedvbvaircfcbdeo.supabase.co/rest/v1/transactions"}, "position": [1408, 1616], "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.3}, {"id": "69194eb8-82f4-457e-8d11-5d607735f2a2", "name": "Loop Over Items", "parameters": {"options": {}}, "position": [64, 1536], "type": "n8n-nodes-base.splitInBatches", "typeVersion": 3}, {"id": "2c2233aa-1487-4f15-ab38-d4d418e27295", "name": "logOutput", "parameters": {"operation": "toJson", "options": {}}, "position": [288, 1344], "type": "n8n-nodes-base.convertToFile", "typeVersion": 1.1}, {"id": "dd0c2f8f-7b4b-4e4f-b262-4c6109f9e701", "name": "Webhook", "parameters": {"httpMethod": "POST", "options": {}, "path": "plaid-listen-sync"}, "position": [-608, 1632], "type": "n8n-nodes-base.webhook", "typeVersion": 2.1, "webhookId": "25f3b771-1055-43e7-9d8f-7a32fb34b29d"}], "pinData": {"Webhook": [{"body": {"access_token": "access-production-5cade31c-9fa4-4173-a0b2-d1c71985c9f9", "account_id": "00ccc7ae-8ee5-47ec-b413-8cfff92a219c", "cursor": "", "item_id": "bVnn79xqa3h6kmrmVZ6PsZZQaadPJXUqo1jjy"}, "executionMode": "test", "headers": {"accept": "*/*", "accept-encoding": "gzip, deflate, br", "connection": "keep-alive", "content-length": "219", "content-type": "application/json", "host": "localhost:5678", "postman-token": "cc983b88-699f-4e6f-9a96-69465fa68ac4", "user-agent": "PostmanRuntime/7.51.0"}, "params": {}, "query": {}, "webhookUrl": "http://localhost:5678/webhook-test/plaid-listen-sync"}]}}
+{
+    "connections": {
+        "accounts-Transactions": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "Split Transactions Test1",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "Aggregator": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "Run Categorization Waterfall",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "getProviderData5": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "Workflow Configuration",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "Loop Over Items": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "Aggregator",
+                        "type": "main"
+                    }
+                ],
+                [
+                    {
+                        "index": 0,
+                        "node": "accounts-Transactions",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "Run Categorization Waterfall": {
+            "main": [
+                [
+                ]
+            ]
+        },
+        "Schedule Every 6-12 Hours": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "getProviderData5",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "Split Transactions Test1": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "transformAccounts",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "supabase_cursorPersistance": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "Loop Over Items",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "supabase_transactionsUpsert": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "supabase_cursorPersistance",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "supabaseUpsertAccounts": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "transactionTransform",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "transactionTransform": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "supabase_transactionsUpsert",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "transformAccounts": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "supabaseUpsertAccounts",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "Webhook": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "getProviderData5",
+                        "type": "main"
+                    }
+                ]
+            ]
+        },
+        "Workflow Configuration": {
+            "main": [
+                [
+                    {
+                        "index": 0,
+                        "node": "Loop Over Items",
+                        "type": "main"
+                    }
+                ]
+            ]
+        }
+    },
+    "meta": {
+        "instanceId": "6b8070f56758ed070d4025219f0915bbf80b51f4ff99cdfcfaafdbcdea2eb129"
+    },
+    "nodes": [
+        {
+            "id": "c4adb583-3b18-4539-9cd1-2995319b6f23",
+            "name": "Schedule Every 6-12 Hours",
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "hours",
+                            "hoursInterval": 6
+                        }
+                    ]
+                }
+            },
+            "position": [
+                -608,
+                1424
+            ],
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.3
+        },
+        {
+            "id": "7fa2d8b3-bdf6-4f46-9d56-dd8bf192aaaf",
+            "name": "Workflow Configuration",
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "id-1",
+                            "name": "plaidClientId",
+                            "type": "string",
+                            "value": "=[redacted]"
+                        },
+                        {
+                            "id": "id-2",
+                            "name": "plaidSecret",
+                            "type": "string",
+                            "value": "=[redacted]"
+                        },
+                        {
+                            "id": "id-3",
+                            "name": "plaidAccessToken",
+                            "type": "string",
+                            "value": "={{ $json.access_token }}"
+                        },
+                        {
+                            "id": "4e6d53fa-8a1a-4ff5-aa59-72d3ab154082",
+                            "name": "supabaseProjectId",
+                            "type": "string",
+                            "value": "eknxbedvbvaircfcbdeo"
+                        },
+                        {
+                            "id": "bef36273-1da8-45dd-91b1-3c164553f4fc",
+                            "name": "supabaseUrl",
+                            "type": "string",
+                            "value": "https://eknxbedvbvaircfcbdeo.supabase.co"
+                        }
+                    ]
+                },
+                "includeOtherFields": true,
+                "options": {
+                }
+            },
+            "position": [
+                -160,
+                1536
+            ],
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4
+        },
+        {
+            "credentials": {
+                "supabaseApi": {
+                    "id": "Pik9yTKOmYDTsg3Y",
+                    "name": "supabase-FinancialDashboard"
+                }
+            },
+            "id": "96f30629-7057-4285-ba6d-72a8662dfc41",
+            "name": "getProviderData5",
+            "parameters": {
+                "operation": "getAll",
+                "tableId": "provider_connections"
+            },
+            "position": [
+                -384,
+                1536
+            ],
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1
+        },
+        {
+            "alwaysOutputData": true,
+            "id": "971ff802-2f94-4922-af4d-3c44952701cd",
+            "name": "Split Transactions Test1",
+            "parameters": {
+                "fieldsToInclude": "has_more,next_cursor",
+                "fieldToSplitOut": "body.accounts",
+                "include": "selectedOtherFields",
+                "options": {
+                }
+            },
+            "position": [
+                512,
+                1536
+            ],
+            "type": "n8n-nodes-base.splitOut",
+            "typeVersion": 1
+        },
+        {
+            "alwaysOutputData": false,
+            "id": "4149f22f-189c-454d-af59-86705ee6c844",
+            "name": "accounts-Transactions",
+            "parameters": {
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                        }
+                    ]
+                },
+                "jsonBody": "={\n  \"client_id\": \"{{ $json.plaidClientId }}\",\n  \"secret\": \"{{ $json.plaidSecret }}\",\n  \"access_token\": \"{{ $json.plaidAccessToken }}\",\n  \"cursor\": \"{{ $json.transaction_cursor || '' }}\",\n  \"count\": 200\n}",
+                "method": "POST",
+                "options": {
+                    "batching": {
+                        "batch": {
+                            "batchInterval": 2000,
+                            "batchSize": 1
+                        }
+                    },
+                    "pagination": {
+                        "pagination": {
+                            "completeExpression": "={{$response.body.has_more === false}}",
+                            "paginationCompleteWhen": "other",
+                            "parameters": {
+                                "parameters": [
+                                    {
+                                        "name": "cursor",
+                                        "type": "body",
+                                        "value": "={{$response.body.next_cursor}}"
+                                    }
+                                ]
+                            },
+                            "requestInterval": 1000
+                        }
+                    },
+                    "redirect": {
+                        "redirect": {
+                            "followRedirects": false
+                        }
+                    },
+                    "response": {
+                        "response": {
+                            "fullResponse": true
+                        }
+                    }
+                },
+                "sendBody": true,
+                "specifyBody": "=json",
+                "url": "https://production.plaid.com/transactions/sync"
+            },
+            "position": [
+                288,
+                1536
+            ],
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3
+        },
+        {
+            "id": "2ed330c2-7eea-46d0-9a22-d6fc418f302e",
+            "name": "transformAccounts",
+            "parameters": {
+                "jsCode": "// Your incoming items look like: { \"body.accounts\": { ... } }\nconst accounts = $input\n  .all()\n  .map(i => i.json[\"body.accounts\"])  // <-- THIS is the key fix\n  .filter(Boolean);\n\n// Optional: dedupe by provider_account_id so bulk upsert doesn't repeat rows\nconst seen = new Set();\n\nconst accountsToUpsert = accounts\n  .map(a => ({\n    provider: 'plaid',\n    provider_account_id: a.account_id,\n    name: a.name,\n    institution: $('Loop Over Items').first().json.institution_name, \n    account_type: a.subtype ?? a.type ?? null,\n    mask: a.mask ?? null,\n    balance_current: a.balances?.current ?? null,\n    balance_available: a.balances?.available ?? null,\n    include_in_cashflow: true,\n    is_active: true,\n    updated_at: new Date().toISOString(),\n  }))\n  .filter(r => {\n    // enforce required fields + dedupe\n    if (!r.provider_account_id || !r.name) return false;\n    const k = `${r.provider}:${r.provider_account_id}`;\n    if (seen.has(k)) return false;\n    seen.add(k);\n    return true;\n  });\n\nreturn [{ json: { accountsToUpsert } }];\n"
+            },
+            "position": [
+                736,
+                1536
+            ],
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2
+        },
+        {
+            "id": "974e4f31-9253-4b5b-95cc-286c00b87d2a",
+            "name": "transactionTransform",
+            "parameters": {
+                "jsCode": "// transactionTransform (Run Once for All Items)\n// Current input: Supabase upsert response rows for accounts (each item has id + provider_account_id)\n// We also pull Plaid transactions from node: \"accounts-Transactions\"\n\nconst PLAID_NODE = 'accounts-Transactions';\n\n// 1) Build lookup: Plaid account_id -> Supabase accounts.id (uuid)\nconst accountRows = $input.all().map(i => i.json).filter(Boolean);\n\nconst accountLookup = new Map(\n  accountRows\n    .filter(r => r.provider_account_id && r.id)\n    .map(r => [r.provider_account_id, r.id])\n);\n\n// 2) Pull all Plaid transactions from accounts-Transactions\nconst plaidItems = $items(PLAID_NODE);\n\nconst added = plaidItems\n  .flatMap(i => i.json.body?.added ?? [])\n  .filter(Boolean);\n\nconst modified = plaidItems\n  .flatMap(i => i.json.body?.modified ?? [])\n  .filter(Boolean);\n\nconst removed = plaidItems\n  .flatMap(i => i.json.body?.removed ?? [])\n  .filter(Boolean);\n\n// 3) Helper function to transform a Plaid transaction to our schema\nconst transformTransaction = (t) => {\n  const provider = 'plaid';\n  const provider_account_id = t.account_id ?? null;\n  const account_id = provider_account_id ? accountLookup.get(provider_account_id) : null;\n  const provider_transaction_id = t.transaction_id ?? null;\n  const date = t.date ?? t.authorized_date ?? null;\n  \n  // Negate Plaid amount: Plaid positive = outflow, we want positive = inflow\n  const amount = (typeof t.amount === 'number') ? -t.amount : -Number(t.amount);\n\n  const counterparty_name =\n    t.merchant_name ??\n    t.counterparties?.[0]?.name ??\n    null;\n\n  const description_raw =\n    t.original_description ??\n    t.name ??\n    counterparty_name ??\n    null;\n\n  const description_clean =\n    t.name ??\n    counterparty_name ??\n    null;\n\n  const status = (t.pending === true) ? 'pending' : 'posted';\n\n  // Plaid category enrichment\n  const category_ai = \n    t.personal_finance_category?.detailed ??\n    t.personal_finance_category?.primary ??\n    (Array.isArray(t.category) ? t.category.join(' > ') : null);\n\n  const confidenceMap = {\n    'VERY_HIGH': 95,\n    'HIGH': 85,\n    'MEDIUM': 70,\n    'LOW': 50\n  };\n  const category_ai_conf = \n    confidenceMap[t.personal_finance_category?.confidence_level] ?? \n    (Array.isArray(t.category) ? 60 : null);\n\n  // Validate required fields\n  if (!provider_transaction_id || !account_id || !date || Number.isNaN(amount)) return null;\n\n  return {\n    provider,\n    provider_transaction_id,\n    account_id,\n    provider_account_id,\n    date,\n    amount,\n    description_raw,\n    description_clean,\n    counterparty_name,\n    provider_type: t.payment_channel ?? null,\n    status,\n    processing_status: 'complete',\n    category_ai,\n    category_ai_conf,\n    updated_at: new Date().toISOString(),\n  };\n};\n\n// 4) Transform added + modified (both go through UPSERT)\nconst seen = new Set();\n\nconst transactionsToUpsert = [...added, ...modified]\n  .map(t => {\n    const transformed = transformTransaction(t);\n    if (!transformed) return null;\n    \n    // Dedupe\n    const k = `${transformed.provider}:${transformed.provider_transaction_id}`;\n    if (seen.has(k)) return null;\n    seen.add(k);\n    \n    return transformed;\n  })\n  .filter(Boolean);\n\n// 5) Extract removed transaction IDs for soft delete\nconst removedTransactionIds = removed\n  .map(r => r.transaction_id)\n  .filter(Boolean);\n\nreturn [{\n  json: {\n    transactionsToUpsert,\n    removedTransactionIds,\n    counts: {\n      added: added.length,\n      modified: modified.length,\n      removed: removedTransactionIds.length,\n      totalUpsert: transactionsToUpsert.length,\n    }\n  }\n}];"
+            },
+            "position": [
+                1184,
+                1536
+            ],
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2
+        },
+        {
+            "credentials": {
+                "supabaseApi": {
+                    "id": "Pik9yTKOmYDTsg3Y",
+                    "name": "supabase-FinancialDashboard"
+                }
+            },
+            "id": "e66976ae-52ab-498b-9aa4-d87706d51e60",
+            "name": "supabaseUpsertAccounts",
+            "parameters": {
+                "authentication": "predefinedCredentialType",
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "apikey",
+                            "value": "sb_publishable_hAViZp9o7rw7vb-sh5gEyw_KLRuJTUE"
+                        },
+                        {
+                            "name": "Prefer",
+                            "value": "resolution=merge-duplicates, return=representation"
+                        }
+                    ]
+                },
+                "jsonBody": "={{ $json.accountsToUpsert }}",
+                "method": "POST",
+                "nodeCredentialType": "supabaseApi",
+                "options": {
+                    "redirect": {
+                        "redirect": {
+                        }
+                    }
+                },
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "on_conflict",
+                            "value": "provider,provider_account_id"
+                        },
+                        {
+                            "name": "select",
+                            "value": "id,provider,provider_account_id,name,balance_current,balance_available"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "sendHeaders": true,
+                "sendQuery": true,
+                "specifyBody": "json",
+                "url": "https://eknxbedvbvaircfcbdeo.supabase.co/rest/v1/accounts"
+            },
+            "position": [
+                960,
+                1536
+            ],
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3
+        },
+        {
+            "credentials": {
+                "supabaseApi": {
+                    "id": "Pik9yTKOmYDTsg3Y",
+                    "name": "supabase-FinancialDashboard"
+                }
+            },
+            "id": "c6e1fa12-6194-4008-9c10-ca3e339cafd7",
+            "name": "supabase_transactionsUpsert",
+            "parameters": {
+                "authentication": "predefinedCredentialType",
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Prefer",
+                            "value": "resolution=merge-duplicates, return=representation"
+                        }
+                    ]
+                },
+                "jsonBody": "={{ $json.transactionsToUpsert }}",
+                "method": "POST",
+                "nodeCredentialType": "supabaseApi",
+                "options": {
+                    "redirect": {
+                        "redirect": {
+                        }
+                    }
+                },
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "on_conflict",
+                            "value": "provider,provider_transaction_id"
+                        },
+                        {
+                            "name": "select",
+                            "value": "id,provider,provider_transaction_id,account_id,provider_account_id,date,amount,status"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "sendHeaders": true,
+                "sendQuery": true,
+                "specifyBody": "json",
+                "url": "https://eknxbedvbvaircfcbdeo.supabase.co/rest/v1/transactions"
+            },
+            "position": [
+                1392,
+                1536
+            ],
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3
+        },
+        {
+            "id": "69194eb8-82f4-457e-8d11-5d607735f2a2",
+            "name": "Loop Over Items",
+            "parameters": {
+                "options": {
+                }
+            },
+            "position": [
+                64,
+                1536
+            ],
+            "type": "n8n-nodes-base.splitInBatches",
+            "typeVersion": 3
+        },
+        {
+            "id": "dd0c2f8f-7b4b-4e4f-b262-4c6109f9e701",
+            "name": "Webhook",
+            "parameters": {
+                "httpMethod": "POST",
+                "options": {
+                },
+                "path": "plaid-listen-sync"
+            },
+            "position": [
+                -608,
+                1632
+            ],
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2.1,
+            "webhookId": "25f3b771-1055-43e7-9d8f-7a32fb34b29d"
+        },
+        {
+            "credentials": {
+                "supabaseApi": {
+                    "id": "Pik9yTKOmYDTsg3Y",
+                    "name": "supabase-FinancialDashboard"
+                }
+            },
+            "id": "e2771f89-8136-475c-9fd9-26a4775014d1",
+            "name": "supabase_cursorPersistance",
+            "parameters": {
+                "authentication": "predefinedCredentialType",
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Prefer",
+                            "value": "return=minimal"
+                        }
+                    ]
+                },
+                "jsonBody": "={\n  \"transaction_cursor\": \"{{ $('accounts-Transactions').last().json.body.next_cursor }}\",\n  \"updated_at\": \"{{ $now.toISO() }}\"\n}",
+                "method": "PATCH",
+                "nodeCredentialType": "supabaseApi",
+                "options": {
+                    "redirect": {
+                        "redirect": {
+                        }
+                    }
+                },
+                "sendBody": true,
+                "sendHeaders": true,
+                "specifyBody": "json",
+                "url": "=https://eknxbedvbvaircfcbdeo.supabase.co/rest/v1/provider_connections?id=eq.{{ $('Loop Over Items').first().json.id }}"
+            },
+            "position": [
+                1648,
+                1536
+            ],
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3
+        },
+        {
+            "credentials": {
+                "supabaseApi": {
+                    "id": "Pik9yTKOmYDTsg3Y",
+                    "name": "supabase-FinancialDashboard"
+                }
+            },
+            "id": "9d691536-489d-481c-9687-0934782670fb",
+            "name": "Run Categorization Waterfall",
+            "parameters": {
+                "authentication": "predefinedCredentialType",
+                "jsonBody": "={\n  \"p_transaction_ids\": {{ JSON.stringify($json.transaction_ids) }}\n}",
+                "method": "POST",
+                "nodeCredentialType": "supabaseApi",
+                "options": {
+                    "redirect": {
+                        "redirect": {
+                        }
+                    }
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "url": "https://eknxbedvbvaircfcbdeo.supabase.co/rest/v1/rpc/fn_run_categorization_waterfall"
+            },
+            "position": [
+                480,
+                1344
+            ],
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3
+        },
+        {
+            "id": "68beb2af-a796-4af6-98c6-ca1f75777eaa",
+            "name": "Aggregator",
+            "parameters": {
+                "jsCode": "// Collect all transaction IDs from all upsert responses\nconst allItems = $('supabase_transactionsUpsert').all();\nconst allTransactionIds = allItems.map(item => item.json.id).filter(Boolean);\n\n// Dedupe just in case\nconst uniqueIds = [...new Set(allTransactionIds)];\n\nreturn [{\n  json: {\n    transaction_ids: uniqueIds,\n    count: uniqueIds.length\n  }\n}];"
+            },
+            "position": [
+                288,
+                1344
+            ],
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2
+        }
+    ],
+    "pinData": {
+    }
+}

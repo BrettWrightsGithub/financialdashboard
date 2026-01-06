@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { formatCurrencyPrecise } from "@/lib/cashflow";
 import { updateTransactionCategory, updateTransactionFlags } from "@/lib/queries";
 import { CategorySourceBadge } from "./CategorySourceBadge";
@@ -80,9 +80,8 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
               </tr>
             ) : (
               groupedTransactions.map(({ transaction, children }) => (
-                <>
+                <React.Fragment key={transaction.id}>
                   <TransactionRow
-                    key={transaction.id}
                     transaction={transaction}
                     categories={categories}
                     onUpdate={onTransactionUpdate}
@@ -99,7 +98,7 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
                       isChild
                     />
                   ))}
-                </>
+                </React.Fragment>
               ))
             )}
           </tbody>

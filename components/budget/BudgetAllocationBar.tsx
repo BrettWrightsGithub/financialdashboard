@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { formatCurrency } from "@/lib/cashflow";
 
 interface BudgetAllocationBarProps {

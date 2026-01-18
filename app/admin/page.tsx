@@ -3,6 +3,52 @@
 import { useState, useEffect, useCallback } from "react";
 import type { HealthReport } from "@/lib/health";
 
+function SyncButton() {
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+  const handleSync = async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/sync/trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}), // Empty body triggers for all accounts
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "Sync failed");
+      }
+      
+      setMessage({ type: 'success', text: "Sync triggered successfully" });
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : "Sync failed" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        onClick={handleSync}
+        disabled={loading}
+        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        {loading ? "Syncing..." : "Trigger Manual Sync"}
+      </button>
+      {message && (
+        <span className={`text-xs ${message.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+          {message.text}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function getTablesFromDetails(
   details: Record<string, unknown> | undefined
 ): Record<string, boolean> | null {
@@ -87,6 +133,19 @@ export default function AdminPage() {
         >
           {loading ? "Checking..." : "Refresh"}
         </button>
+      </div>
+
+      {/* Manual Sync Section */}
+      <div className="mb-8 p-6 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+          Data Synchronization
+        </h2>
+        <div className="flex items-center gap-4">
+          <SyncButton />
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Triggers the N8n workflow to fetch latest transactions from Plaid.
+          </p>
+        </div>
       </div>
 
       {error && (

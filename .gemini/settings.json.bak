@@ -1,0 +1,18 @@
+{
+  "general": {
+    "previewFeatures": true
+  },
+  "mcpServers": {
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp",
+      "trust": true
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--limit-to-host=true"
+      ]
+    }
+  }
+}

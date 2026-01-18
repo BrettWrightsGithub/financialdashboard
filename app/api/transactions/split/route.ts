@@ -11,7 +11,6 @@ import {
   getSplitChildren,
   validateSplitAmounts,
 } from "@/lib/categorization/transactionSplitting";
-import { supabase } from "@/lib/supabase";
 import type { SplitInput } from "@/types/database";
 
 export async function POST(request: NextRequest) {

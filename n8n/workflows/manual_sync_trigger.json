@@ -1,0 +1,81 @@
+{
+  "name": "Manual Sync Trigger",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "trigger-sync",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT access_token, cursor, id as account_id FROM accounts WHERE provider = 'plaid' AND ($1 IS NULL OR id = $1)",
+        "additionalFields": {
+          "queryParams": "={{$json.body.account_id}}"
+        }
+      },
+      "name": "Get Accounts",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.N8N_WEBHOOK_URL}}/plaid-sync",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "access_token",
+              "value": "={{$json.access_token}}"
+            },
+            {
+              "name": "cursor",
+              "value": "={{$json.cursor}}"
+            },
+            {
+              "name": "account_id",
+              "value": "={{$json.account_id}}"
+            }
+          ]
+        }
+      },
+      "name": "Call Plaid Sync Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [500, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Accounts": {
+      "main": [
+        [
+          {
+            "node": "Call Plaid Sync Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

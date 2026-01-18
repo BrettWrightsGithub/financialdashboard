@@ -1,9 +1,16 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page, Locator } from '@playwright/test';
+
+// Helper to get a card by its title
+const getCard = (page: Page, title: string): Locator => {
+  return page.locator('.card').filter({
+    has: page.locator('h2', { hasText: title })
+  });
+};
 
 test.describe('Dashboard E2E Tests', () => {
   test.beforeEach(async ({ page }) => {
     // Navigate to dashboard
-    await page.goto('http://localhost:3004');
+    await page.goto('/');
     // Wait for page to be fully loaded
     await page.waitForLoadState('networkidle');
   });
@@ -12,14 +19,14 @@ test.describe('Dashboard E2E Tests', () => {
     // Verify page title
     await expect(page.locator('h1')).toContainText('Dashboard');
 
-    // Verify main cards are present
-    await expect(page.locator('text=Safe to Spend This Week')).toBeVisible();
-    await expect(page.locator('text=Monthly Cashflow')).toBeVisible();
-    await expect(page.locator('text=Outstanding Inflows')).toBeVisible();
+    // Verify main cards are present using the robust helper
+    await expect(getCard(page, 'Safe to Spend This Week')).toBeVisible();
+    await expect(getCard(page, 'Monthly Cashflow')).toBeVisible();
+    await expect(getCard(page, 'Expected Inflows')).toBeVisible();
     
     // Verify new cards are present
-    await expect(page.locator('text=Cashflow Trend')).toBeVisible();
-    await expect(page.locator('text=Overspent Categories')).toBeVisible();
+    await expect(getCard(page, 'Cashflow Trend')).toBeVisible();
+    await expect(getCard(page, 'Overspent Categories')).toBeVisible(); // Or 'Top Overspent Categories'
   });
 
   test('should have month selector in header', async ({ page }) => {
@@ -35,17 +42,19 @@ test.describe('Dashboard E2E Tests', () => {
   test('should display current month data on initial load', async ({ page }) => {
     // Get current month/year
     const now = new Date();
-    const currentMonthYear = now.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    // UI uses "January 2026" (long month)
+    const currentMonthYear = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     
     // Verify cashflow card shows current month
-    const cashflowCard = page.locator('text=Monthly Cashflow').locator('..');
+    const cashflowCard = getCard(page, 'Monthly Cashflow');
     await expect(cashflowCard).toContainText(currentMonthYear);
   });
 
   test('should change data when selecting different month', async ({ page }) => {
-    // Get initial cashflow value
-    const cashflowCard = page.locator('text=Monthly Cashflow').locator('..');
-    const initialCashflow = await cashflowCard.locator('text=/[+-]?\\$[\\d,]+/').first().textContent();
+    const cashflowCard = getCard(page, 'Monthly Cashflow');
+    
+    // Get initial cashflow value using specific class
+    const initialCashflow = await cashflowCard.locator('.text-3xl').textContent();
     
     // Select previous month from dropdown
     const monthSelector = page.locator('select').first();
@@ -68,25 +77,29 @@ test.describe('Dashboard E2E Tests', () => {
 
   test('should display cashflow trend chart with 6 months', async ({ page }) => {
     // Find the trend card
-    const trendCard = page.locator('text=Cashflow Trend').locator('..');
+    const trendCard = getCard(page, 'Cashflow Trend');
     await expect(trendCard).toBeVisible();
     
     // Verify it contains "Last 6 Months" text
     await expect(trendCard).toContainText('Last 6 Months');
     
     // Verify chart bars are present (should have 6 bars)
-    const chartBars = trendCard.locator('div[style*="height"]').filter({ hasNot: page.locator('text=') });
+    // The bars use .w-full.rounded-t classes
+    const chartBars = trendCard.locator('.w-full.rounded-t');
     const barCount = await chartBars.count();
     expect(barCount).toBeGreaterThanOrEqual(6);
   });
 
   test('should display overspent categories or success message', async ({ page }) => {
-    // Find the overspent card
-    const overspentCard = page.locator('text=Overspent Categories').locator('..');
+    // Find the overspent card (title changes based on content)
+    // We search for either 'Overspent Categories' (empty state) or 'Top Overspent Categories' (data state)
+    // A broader filter:
+    const overspentCard = page.locator('.card').filter({ hasText: 'Overspent Categories' });
     await expect(overspentCard).toBeVisible();
     
     // Check if it shows either overspent categories or success message
-    const hasOverspent = await overspentCard.locator('text=/\\+\\$/').count() > 0;
+    // Using robust locators instead of regex
+    const hasOverspent = await overspentCard.locator('.text-red-600').filter({ hasText: '+' }).count() > 0;
     const hasSuccessMessage = await overspentCard.locator('text=All categories within budget').count() > 0;
     
     expect(hasOverspent || hasSuccessMessage).toBe(true);
@@ -94,7 +107,7 @@ test.describe('Dashboard E2E Tests', () => {
 
   test('should update overspent categories when month changes', async ({ page }) => {
     // Get initial overspent card content
-    const overspentCard = page.locator('text=Overspent Categories').locator('..');
+    const overspentCard = page.locator('.card').filter({ hasText: 'Overspent Categories' });
     const initialContent = await overspentCard.textContent();
     
     // Change month
@@ -114,7 +127,7 @@ test.describe('Dashboard E2E Tests', () => {
 
   test('should show trend chart with current month highlighted', async ({ page }) => {
     // Find the trend card
-    const trendCard = page.locator('text=Cashflow Trend').locator('..');
+    const trendCard = getCard(page, 'Cashflow Trend');
     
     // Verify "Current:" label exists
     await expect(trendCard).toContainText('Current:');
@@ -159,15 +172,16 @@ test.describe('Dashboard E2E Tests', () => {
   });
 
   test('should display safe-to-spend card with progress bar', async ({ page }) => {
-    const safeToSpendCard = page.locator('text=Safe to Spend This Week').locator('..');
+    const safeToSpendCard = getCard(page, 'Safe to Spend This Week');
     await expect(safeToSpendCard).toBeVisible();
     
     // Verify it shows a dollar amount
     await expect(safeToSpendCard).toContainText(/\$/);
     
-    // Verify progress bar exists
-    const progressBar = safeToSpendCard.locator('div[style*="width"]').first();
-    await expect(progressBar).toBeVisible();
+    // Verify progress bar container exists and is visible
+    // We check the container (.h-2) because the inner bar might be width: 0% and "hidden"
+    const progressBarContainer = safeToSpendCard.locator('.h-2.rounded-full');
+    await expect(progressBarContainer).toBeVisible();
     
     // Verify it shows spent and target
     await expect(safeToSpendCard).toContainText('Spent:');
@@ -175,7 +189,8 @@ test.describe('Dashboard E2E Tests', () => {
   });
 
   test('should display outstanding inflows card', async ({ page }) => {
-    const inflowsCard = page.locator('text=Outstanding Inflows').locator('..');
+    // Title is Expected Inflows
+    const inflowsCard = getCard(page, 'Expected Inflows');
     await expect(inflowsCard).toBeVisible();
     
     // Card should be present (content depends on data)
@@ -186,7 +201,7 @@ test.describe('Dashboard E2E Tests', () => {
   test('should show alerts section', async ({ page }) => {
     // Alerts card may or may not have content depending on data
     // Just verify the section exists
-    const alertsSection = page.locator('text=Alerts').locator('..');
+    const alertsSection = page.locator('.card').filter({ hasText: 'Alerts' });
     
     // If alerts exist, they should be visible
     const alertCount = await alertsSection.count();
@@ -205,7 +220,7 @@ test.describe('Dashboard E2E Tests', () => {
   });
 
   test('should display cashflow income and expenses breakdown', async ({ page }) => {
-    const cashflowCard = page.locator('text=Monthly Cashflow').locator('..');
+    const cashflowCard = getCard(page, 'Monthly Cashflow');
     
     // Verify income and expenses labels
     await expect(cashflowCard).toContainText('Income');

@@ -1,0 +1,62 @@
+{
+  "name": "Retroactive Rule Application",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "apply-rules-retroactive",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT fn_run_categorization_waterfall($1::UUID, $2::UUID[])",
+        "additionalFields": {
+          "queryParams": "={{$json.body.batch_id}},{{$json.body.transaction_ids}}"
+        }
+      },
+      "name": "Run Categorization RPC",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "return { json: { success: true, result: $input.all()[0].json } };"
+      },
+      "name": "Format Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [500, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Run Categorization RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Categorization RPC": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

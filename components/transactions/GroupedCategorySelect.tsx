@@ -30,21 +30,18 @@ export function GroupedCategorySelect({
   // Group categories primarily by cashflow_group, with Transfer at top
   // Transfer group
   const transferCats = categories.filter(c => 
-    c.cashflow_group === "Transfer" || c.flow_type === "Transfer"
+    c.cashflow_group === "Transfer"
   );
   
-  // Income group - Income cashflow_group or Income flow_type
+  // Income group - Income cashflow_group
   const incomeCats = categories.filter(c => 
-    c.cashflow_group === "Income" || 
-    (c.flow_type === "Income" && c.cashflow_group !== "Transfer")
+    c.cashflow_group === "Income"
   );
   
   // Expense/Outbound group - everything else that's not Transfer or Income
   const expenseCats = categories.filter(c => 
     c.cashflow_group !== "Transfer" && 
-    c.cashflow_group !== "Income" &&
-    c.flow_type !== "Transfer" &&
-    c.flow_type !== "Income"
+    c.cashflow_group !== "Income"
   );
 
   // Sort each group by sort_order then name

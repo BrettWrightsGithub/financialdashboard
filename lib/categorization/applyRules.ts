@@ -38,12 +38,13 @@ export async function categorizeTransactions(
 export async function categorizeUncategorized(): Promise<CategorizedResult> {
   const supabase = createServerSupabaseClient();
 
-  // Fetch uncategorized, unlocked transactions
+  // Fetch uncategorized, unlocked transactions, excluding confirmed transfers
   const { data: transactions, error } = await supabase
     .from("transactions")
     .select("id")
     .is("life_category_id", null)
     .eq("category_locked", false)
+    .is("transfer_pair_id", null) // Exclude confirmed transfers
     .limit(500); // Process in batches
 
   if (error) {
@@ -82,6 +83,7 @@ export async function categorizeByDateRange(
     .gte("date", startDate)
     .lte("date", endDate)
     .eq("category_locked", false)
+    .is("transfer_pair_id", null) // Exclude confirmed transfers
     .limit(1000);
 
   if (error) {
@@ -116,7 +118,8 @@ export async function recategorizeByRule(ruleId: string): Promise<CategorizedRes
     .from("transactions")
     .select("id")
     .eq("applied_rule_id", ruleId)
-    .eq("category_locked", false);
+    .eq("category_locked", false)
+    .is("transfer_pair_id", null); // Exclude confirmed transfers
 
   if (error) {
     throw new Error(`Failed to fetch transactions: ${error.message}`);

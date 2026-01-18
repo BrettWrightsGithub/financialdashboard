@@ -1,0 +1,126 @@
+{
+  "name": "Plaid Transaction Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "plaid-sync",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://production.plaid.com/transactions/sync",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "client_id",
+              "value": "={{$credentials.plaid.client_id}}"
+            },
+            {
+              "name": "secret",
+              "value": "={{$credentials.plaid.secret}}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{$json.body.access_token}}"
+            },
+            {
+              "name": "cursor",
+              "value": "={{$json.body.cursor}}"
+            }
+          ]
+        }
+      },
+      "name": "Plaid API Sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Transform Plaid response to Supabase format\nconst items = $input.all();\nconst added = items[0].json.added || [];\n\nreturn added.map(txn => ({\n  json: {\n    plaid_transaction_id: txn.transaction_id,\n    amount: txn.amount,\n    date: txn.date,\n    description: txn.name,\n    pending_transaction_id: txn.pending_transaction_id,\n    plaid_category_id: txn.personal_finance_category.primary,\n    plaid_confidence: txn.personal_finance_category.confidence_level\n  }
+}));"
+      },
+      "name": "Transform Added",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "table": "transactions",
+        "columns": "plaid_transaction_id,amount,date,description,pending_transaction_id,plaid_category_id,plaid_confidence",
+        "upsert": true
+      },
+      "name": "Supabase Insert",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "return { json: { success: true, processed: $items.length } };"
+      },
+      "name": "Success Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Plaid API Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plaid API Sync": {
+      "main": [
+        [
+          {
+            "node": "Transform Added",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Added": {
+      "main": [
+        [
+          {
+            "node": "Supabase Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Insert": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

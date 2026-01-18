@@ -9,5 +9,14 @@
   },
   "ide": {
     "enabled": true
+  },
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ]
+    }
   }
 }

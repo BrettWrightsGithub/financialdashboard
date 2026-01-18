@@ -10,6 +10,7 @@ export * from "./applyRules";
 export * from "./payeeMemory";
 export * from "./userOverride";
 export * from "./transferDetection";
+export * from "./transferLinking";
 export * from "./reimbursementHandler";
 export * from "./auditLog";
 export * from "./retroactiveRules";

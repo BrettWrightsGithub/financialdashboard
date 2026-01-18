@@ -97,6 +97,8 @@ export interface Transaction {
   parent_transaction_id: string | null;
   is_split_child: boolean;
   is_split_parent: boolean;
+  transfer_pair_id: string | null;
+  transfer_confidence: number | null;
   created_at: string;
   updated_at: string;
 }

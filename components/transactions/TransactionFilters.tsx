@@ -117,20 +117,20 @@ export function TransactionFilters({ filters, onFiltersChange, accounts }: Trans
           <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 cursor-pointer">
             <input
               type="checkbox"
-              checked={filters.hideTransfers}
-              onChange={(e) => updateFilter("hideTransfers", e.target.checked)}
+              checked={!filters.hideTransfers}
+              onChange={(e) => updateFilter("hideTransfers", !e.target.checked)}
               className="rounded border-slate-300 dark:border-slate-600"
             />
-            Hide Transfers
+            Show Transfers
           </label>
           <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 cursor-pointer">
             <input
               type="checkbox"
-              checked={filters.hidePassThrough}
-              onChange={(e) => updateFilter("hidePassThrough", e.target.checked)}
+              checked={!filters.hidePassThrough}
+              onChange={(e) => updateFilter("hidePassThrough", !e.target.checked)}
               className="rounded border-slate-300 dark:border-slate-600"
             />
-            Hide Pass-Through
+            Show Pass-Through
           </label>
         </div>
       </div>

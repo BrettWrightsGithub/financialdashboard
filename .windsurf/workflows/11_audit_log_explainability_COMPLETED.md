@@ -1,7 +1,20 @@
 ---
 description: Implement audit logging and explainability badges for transaction categorization per `docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md` (FR-12, FR-14, TI-05).
 auto_execution_mode: 1
+status: COMPLETED
+completed_date: 2026-01-02
 ---
+
+## Completion Summary
+
+**Done:** Implemented audit logging and explainability badges.
+
+- Created `supabase/migrations/20260102_audit_log_and_sync.sql` - category_audit_log table, fn_log_category_change
+- Created `lib/categorization/auditLog.ts` - Log/query audit history
+- Enhanced `components/transactions/CategorySourceBadge.tsx` - Added rule name, new sources
+- Created `components/transactions/AuditHistoryModal.tsx` - Timeline view of changes
+- Created `app/api/transactions/[id]/audit/route.ts` - Audit history API
+- Created `docs/categorization/audit_log.md` - Documentation
 
 ## Testing Reference
 

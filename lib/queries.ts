@@ -204,6 +204,201 @@ export async function getBudgetTargets(month: string): Promise<BudgetTarget[]> {
   return data || [];
 }
 
+// Get actuals for a specific month by category
+export async function getActualsByCategory(month: string): Promise<{ category_id: string; total: number }[]> {
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty actuals");
+    return [];
+  }
+
+  const monthDate = `${month}-01`;
+  const [year, monthNum] = month.split("-").map(Number);
+  const startDate = monthDate;
+  const endDate = new Date(year, monthNum, 0).toISOString().split("T")[0];
+
+  // Get cashflow accounts
+  const { data: accounts } = await supabase
+    .from("accounts")
+    .select("id")
+    .eq("is_active", true)
+    .eq("include_in_cashflow", true);
+
+  const cashflowAccountIds = (accounts || []).map(a => a.id);
+
+  // Get transactions for the month
+  const { data: transactions } = await supabase
+    .from("transactions")
+    .select("life_category_id, amount")
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .eq("status", "posted")
+    .eq("is_transfer", false)
+    .eq("is_split_parent", false)
+    .in("account_id", cashflowAccountIds);
+
+  const actualsByCategory: Record<string, number> = {};
+  (transactions || []).forEach(t => {
+    if (t.life_category_id) {
+      actualsByCategory[t.life_category_id] = (actualsByCategory[t.life_category_id] || 0) + t.amount;
+    }
+  });
+
+  return Object.entries(actualsByCategory).map(([category_id, total]) => ({
+    category_id,
+    total,
+  }));
+}
+
+// Get 3-month rolling average by category
+export async function getThreeMonthAverage(endMonth: string): Promise<{ category_id: string; average: number }[]> {
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty averages");
+    return [];
+  }
+
+  const [year, monthNum] = endMonth.split("-").map(Number);
+  const endDate = new Date(year, monthNum, 0).toISOString().split("T")[0];
+  const startDate = new Date(year, monthNum - 3, 1).toISOString().split("T")[0];
+
+  // Get cashflow accounts
+  const { data: accounts } = await supabase
+    .from("accounts")
+    .select("id")
+    .eq("is_active", true)
+    .eq("include_in_cashflow", true);
+
+  const cashflowAccountIds = (accounts || []).map(a => a.id);
+
+  // Get transactions for the 3-month period
+  const { data: transactions } = await supabase
+    .from("transactions")
+    .select("life_category_id, amount")
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .eq("status", "posted")
+    .eq("is_transfer", false)
+    .eq("is_split_parent", false)
+    .in("account_id", cashflowAccountIds);
+
+  const actualsByCategory: Record<string, number[]> = {};
+  (transactions || []).forEach(t => {
+    if (t.life_category_id) {
+      if (!actualsByCategory[t.life_category_id]) {
+        actualsByCategory[t.life_category_id] = [];
+      }
+      actualsByCategory[t.life_category_id].push(t.amount);
+    }
+  });
+
+  return Object.entries(actualsByCategory).map(([category_id, amounts]) => ({
+    category_id,
+    average: amounts.reduce((sum, amount) => sum + Math.abs(amount), 0) / amounts.length,
+  }));
+}
+
+// Get most recent month with budget data
+export async function getMostRecentBudgetMonth(): Promise<string | null> {
+  if (!supabase) {
+    console.warn("Supabase not configured - returning null");
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("budget_targets")
+    .select("month")
+    .not("month", "is", null)
+    .order("month", { ascending: false })
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    return null;
+  }
+
+  // Convert YYYY-MM-DD to YYYY-MM
+  const monthDate = data[0].month;
+  return monthDate.substring(0, 7);
+}
+
+// Upsert a budget target
+export async function upsertBudgetTarget(
+  categoryId: string, 
+  month: string, 
+  amount: number, 
+  notes?: string
+): Promise<void> {
+  if (!supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const monthDate = `${month}-01`;
+
+  const { error } = await supabase
+    .from("budget_targets")
+    .upsert({
+      category_id: categoryId,
+      month: monthDate,
+      amount,
+      notes: notes || null,
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: "category_id,month",
+    });
+
+  if (error) {
+    throw error;
+  }
+}
+
+// Delete a budget target
+export async function deleteBudgetTarget(id: string): Promise<void> {
+  if (!supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const { error } = await supabase
+    .from("budget_targets")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    throw error;
+  }
+}
+
+// Copy budget from one month to another
+export async function copyBudgetForward(
+  sourceMonth: string, 
+  destMonth: string, 
+  includeInflows: boolean
+): Promise<{ targetsCopied: number; inflowsCopied: number }> {
+  if (!supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const response = await fetch("/api/budget-targets/copy-forward", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      sourceMonth,
+      destMonth,
+      includeExpectedInflows: includeInflows,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to copy budget forward");
+  }
+
+  const result = await response.json();
+  return {
+    targetsCopied: result.data.targetsCopied,
+    inflowsCopied: result.data.inflowsCopied,
+  };
+}
+
 export async function getBudgetSummary(month: string): Promise<{
   categories: Category[];
   targets: BudgetTarget[];
@@ -224,33 +419,44 @@ export async function getBudgetSummary(month: string): Promise<{
     0
   ).toISOString().split("T")[0];
 
-  // Fetch categories, targets, and transactions in parallel
-  const [categoriesRes, targetsRes, transactionsRes] = await Promise.all([
+  // Fetch categories, targets, accounts, and transactions in parallel
+  const [categoriesRes, targetsRes, accountsRes, transactionsRes] = await Promise.all([
     supabase.from("categories").select("*").eq("is_active", true).order("sort_order"),
     supabase.from("budget_targets").select("*").eq("month", monthDate),
+    supabase.from("accounts").select("id, include_in_cashflow").eq("is_active", true),
     supabase
       .from("transactions")
-      .select("life_category_id, amount, cashflow_group")
+      .select("life_category_id, amount, cashflow_group, account_id")
       .gte("date", startDate)
       .lte("date", endDate)
       .eq("status", "posted")
-      .eq("is_transfer", false),
+      .eq("is_transfer", false)
+      .eq("is_split_parent", false),
   ]);
 
-  // Calculate actuals by category (using life_category_id when available)
+  // Create a Set of account IDs that should be included in cashflow
+  const cashflowAccountIds = new Set(
+    (accountsRes.data || []).filter((a) => a.include_in_cashflow).map((a) => a.id)
+  );
+
+  // Filter transactions to only include those from cashflow accounts
+  const cashflowTransactions = (transactionsRes.data || []).filter((t) =>
+    cashflowAccountIds.has(t.account_id)
+  );
+
+  // Calculate actuals by category using SIGNED sums (not Math.abs)
+  // This is critical for refund handling - refunds are positive amounts in expense categories
   const actualsByCategory: Record<string, number> = {};
-  // Also track actuals by cashflow_group for categories without direct transaction links
   const actualsByCashflowGroup: Record<string, number> = {};
   
-  for (const t of transactionsRes.data || []) {
+  for (const t of cashflowTransactions) {
     if (t.life_category_id) {
       actualsByCategory[t.life_category_id] =
-        (actualsByCategory[t.life_category_id] || 0) + Math.abs(t.amount);
+        (actualsByCategory[t.life_category_id] || 0) + t.amount;
     }
-    // Also aggregate by cashflow_group for fallback matching
     if (t.cashflow_group) {
       actualsByCashflowGroup[t.cashflow_group] =
-        (actualsByCashflowGroup[t.cashflow_group] || 0) + Math.abs(t.amount);
+        (actualsByCashflowGroup[t.cashflow_group] || 0) + t.amount;
     }
   }
 
@@ -302,21 +508,135 @@ export async function getExpectedInflows(month: string): Promise<ExpectedInflow[
 
 // ============ Dashboard Aggregates ============
 
+export async function getCashflowTrend(months: number = 6): Promise<{ month: string; net: number }[]> {
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty cashflow trend");
+    return [];
+  }
+
+  const trend = [];
+  const now = new Date();
+
+  for (let i = months - 1; i >= 0; i--) {
+    const targetDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, "0")}`;
+    
+    const data = await getDashboardData(monthStr);
+    
+    trend.push({
+      month: monthStr,
+      net: data.netCashflow,
+    });
+  }
+
+  return trend;
+}
+
+export async function getOverspentCategories(
+  month: string,
+  limit: number = 3
+): Promise<{ categoryId: string; categoryName: string; budgeted: number; actual: number; overspent: number }[]> {
+  if (!supabase) {
+    console.warn("Supabase not configured - returning empty overspent categories");
+    return [];
+  }
+
+  const monthDate = `${month}-01`;
+  const [year, monthNum] = month.split("-").map(Number);
+  const startDate = monthDate;
+  const endDate = new Date(year, monthNum, 0).toISOString().split("T")[0];
+
+  // Fetch budget targets and accounts
+  const [budgetRes, accountsRes] = await Promise.all([
+    supabase
+      .from("budget_targets")
+      .select("*, categories(id, name, cashflow_group)")
+      .eq("month", monthDate),
+    supabase.from("accounts").select("id, include_in_cashflow").eq("is_active", true),
+  ]);
+
+  const budgetTargets = budgetRes.data || [];
+  const accounts = accountsRes.data || [];
+
+  // Create a Set of account IDs that should be included in cashflow
+  const cashflowAccountIds = new Set(
+    accounts.filter((a) => a.include_in_cashflow).map((a) => a.id)
+  );
+
+  // Fetch transactions for the month
+  const { data: allTransactions } = await supabase
+    .from("transactions")
+    .select("*")
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .eq("status", "posted")
+    .eq("is_transfer", false)
+    .eq("is_split_parent", false);
+
+  const transactions = (allTransactions || []).filter((t) =>
+    cashflowAccountIds.has(t.account_id)
+  );
+
+  // Calculate actual spending by category
+  const actualByCategory: Record<string, number> = {};
+  for (const t of transactions) {
+    if (t.life_category_id && t.amount < 0) {
+      actualByCategory[t.life_category_id] =
+        (actualByCategory[t.life_category_id] || 0) + Math.abs(t.amount);
+    }
+  }
+
+  // Compare budget vs actual for expense categories
+  const overspentList = budgetTargets
+    .filter((bt: any) => {
+      const group = bt.categories?.cashflow_group;
+      return group && group !== "Income" && group !== "Transfer";
+    })
+    .map((bt: any) => {
+      const categoryId = bt.category_id;
+      const actual = actualByCategory[categoryId] || 0;
+      const budgeted = Math.abs(bt.amount);
+      const overspent = actual - budgeted;
+
+      return {
+        categoryId,
+        categoryName: bt.categories?.name || "Unknown",
+        budgeted,
+        actual,
+        overspent,
+      };
+    })
+    .filter((item) => item.overspent > 0)
+    .sort((a, b) => b.overspent - a.overspent)
+    .slice(0, limit);
+
+  return overspentList;
+}
+
 export async function getDashboardData(month: string) {
   // Check if Supabase is configured
   if (!supabase) {
     console.warn("Supabase not configured - returning empty dashboard data");
     return {
-      accounts: [],
-      transactions: [],
-      budgetData: { categories: [], targets: [], actuals: [] },
-      expectedInflows: [],
-      cashflowSummary: {
-        totalIncome: 0,
-        totalExpenses: 0,
-        netCashflow: 0,
-        safeToSpend: 0,
+      cashflow: {
+        income: 0,
+        fixed: 0,
+        variableEssentials: 0,
+        discretionary: 0,
+        debt: 0,
+        savings: 0,
+        business: 0,
       },
+      totalExpenses: 0,
+      netCashflow: 0,
+      safeToSpend: {
+        weeklyTarget: 0,
+        weeklySpent: 0,
+        remaining: 0,
+        monthlyBudget: 0,
+      },
+      outstandingInflows: [],
+      transactions: [],
     };
   }
 
@@ -326,7 +646,7 @@ export async function getDashboardData(month: string) {
   const endDate = new Date(year, monthNum, 0).toISOString().split("T")[0];
 
   // Fetch all needed data in parallel
-  const [transactionsRes, budgetRes, inflowsRes] = await Promise.all([
+  const [transactionsRes, budgetRes, inflowsRes, accountsRes] = await Promise.all([
     supabase
       .from("transactions")
       .select("*")
@@ -335,11 +655,23 @@ export async function getDashboardData(month: string) {
       .eq("status", "posted"),
     supabase.from("budget_targets").select("*, categories(name, cashflow_group)").eq("month", monthDate),
     supabase.from("expected_inflows").select("*").eq("month", monthDate),
+    supabase.from("accounts").select("id, include_in_cashflow").eq("is_active", true),
   ]);
 
-  const transactions = transactionsRes.data || [];
+  const allTransactions = transactionsRes.data || [];
   const budgetTargets = budgetRes.data || [];
   const expectedInflows = inflowsRes.data || [];
+  const accounts = accountsRes.data || [];
+
+  // Create a Set of account IDs that should be included in cashflow
+  const cashflowAccountIds = new Set(
+    accounts.filter((a) => a.include_in_cashflow).map((a) => a.id)
+  );
+
+  // Filter transactions to only include those from cashflow accounts
+  const transactions = allTransactions.filter((t) =>
+    cashflowAccountIds.has(t.account_id)
+  );
 
   // Calculate cashflow by group
   const cashflow = {

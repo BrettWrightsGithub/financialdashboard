@@ -29,29 +29,92 @@ export async function applyUserOverride(
 ): Promise<OverrideResult> {
   const supabase = createServerSupabaseClient();
 
-  const { data, error } = await supabase.rpc("fn_apply_user_override", {
-    p_transaction_id: transactionId,
-    p_new_category_id: newCategoryId,
-    p_learn_payee: learnPayee,
-  });
+  // 1. Get current transaction state
+  const { data: transaction, error: fetchError } = await supabase
+    .from("transactions")
+    .select("id, life_category_id, counterparty_name, category_source")
+    .eq("id", transactionId)
+    .single();
 
-  if (error) {
-    console.error("Error applying user override:", error);
+  if (fetchError || !transaction) {
+    console.error("Error fetching transaction:", fetchError);
     return {
       success: false,
       oldCategoryId: null,
       newCategoryId,
       payeeLearned: false,
-      error: error.message,
+      error: fetchError?.message || "Transaction not found",
     };
   }
 
+  const oldCategoryId = transaction.life_category_id;
+
+  // 2. Update the transaction
+  const { error: updateError } = await supabase
+    .from("transactions")
+    .update({
+      life_category_id: newCategoryId,
+      category_locked: true,
+      category_source: "manual",
+      category_confidence: 1.0,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", transactionId);
+
+  if (updateError) {
+    console.error("Error updating transaction:", updateError);
+    return {
+      success: false,
+      oldCategoryId,
+      newCategoryId,
+      payeeLearned: false,
+      error: updateError.message,
+    };
+  }
+
+  // 3. Learn payee if requested and counterparty exists
+  let payeeLearned = false;
+  if (learnPayee && transaction.counterparty_name) {
+    const { error: memoryError } = await supabase
+      .from("payee_category_memory")
+      .upsert({
+        payee_name: transaction.counterparty_name.toLowerCase().trim(),
+        category_id: newCategoryId,
+        learned_from_transaction_id: transactionId,
+        confidence: 1.0,
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: "payee_name",
+      });
+
+    if (!memoryError) {
+      payeeLearned = true;
+    } else {
+      console.warn("Failed to save payee memory:", memoryError);
+    }
+  }
+
+  // 4. Log to audit (best effort - don't fail if audit table doesn't exist)
+  try {
+    await supabase
+      .from("category_audit_log")
+      .insert({
+        transaction_id: transactionId,
+        previous_category_id: oldCategoryId,
+        new_category_id: newCategoryId,
+        change_source: "manual",
+        changed_by: "user",
+        confidence_score: 1.0,
+      });
+  } catch (auditError) {
+    console.warn("Audit log insert failed (table may not exist):", auditError);
+  }
+
   return {
-    success: data?.success ?? false,
-    oldCategoryId: data?.old_category_id ?? null,
-    newCategoryId: data?.new_category_id ?? newCategoryId,
-    payeeLearned: data?.payee_learned ?? false,
-    error: data?.error,
+    success: true,
+    oldCategoryId,
+    newCategoryId,
+    payeeLearned,
   };
 }
 

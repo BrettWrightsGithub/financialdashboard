@@ -1,6 +1,45 @@
 "use client";
 
+import { useState } from "react";
 import type { Category } from "@/types/database";
+
+// Info tooltips for each field
+const FIELD_INFO: Record<string, string> = {
+  name: "A short, descriptive name for this rule (e.g., 'Grocery Stores', 'Netflix Subscription'). This helps you identify the rule later.",
+  priority: "Higher priority rules run first (1-100). If multiple rules could match a transaction, the highest priority rule wins. Default is 50.",
+  description: "Optional notes about when/why this rule should apply. Helpful for remembering the purpose later.",
+  match_merchant_contains: "Match transactions where the merchant name CONTAINS this text (case-insensitive). Example: 'STARBUCKS' matches 'STARBUCKS #1234' and 'STARBUCKS COFFEE'.",
+  match_merchant_exact: "Match transactions where the description EXACTLY matches this text. Use for very specific matching when 'contains' is too broad.",
+  match_amount_min: "Only match transactions with an amount >= this value. Leave empty to ignore. Use absolute values (e.g., 50 for $50).",
+  match_amount_max: "Only match transactions with an amount <= this value. Leave empty to ignore. Use absolute values (e.g., 100 for $100).",
+  match_direction: "Filter by money direction: 'Inflow' for income/deposits, 'Outflow' for expenses/payments, or 'Any' to match both.",
+  assign_category_id: "The category to assign when this rule matches. This is required - every rule must assign a category.",
+  assign_is_transfer: "Mark matched transactions as transfers (e.g., moving money between your own accounts). Transfers are excluded from income/expense totals.",
+  assign_is_pass_through: "Mark as pass-through (e.g., T-Mobile reimbursements). Pass-through transactions are netted out in cashflow calculations.",
+  is_active: "Toggle to enable/disable this rule. Inactive rules are saved but won't be applied to transactions.",
+};
+
+// Info icon component with tooltip
+function InfoIcon({ fieldKey }: { fieldKey: string }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const info = FIELD_INFO[fieldKey];
+  if (!info) return null;
+
+  return (
+    <span 
+      className="relative inline-block ml-1 cursor-help"
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <span className="text-slate-400 hover:text-blue-500 text-sm">ⓘ</span>
+      {showTooltip && (
+        <div className="absolute z-50 w-64 p-2 text-xs font-normal normal-case tracking-normal text-left text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-lg -left-2 top-6">
+          {info}
+        </div>
+      )}
+    </span>
+  );
+}
 
 export interface RuleFormData {
   name: string;
@@ -60,7 +99,7 @@ export function RuleForm({
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-            Rule Name *
+            Rule Name *<InfoIcon fieldKey="name" />
           </label>
           <input
             type="text"
@@ -72,7 +111,7 @@ export function RuleForm({
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-            Priority (higher = runs first)
+            Priority (higher = runs first)<InfoIcon fieldKey="priority" />
           </label>
           <input
             type="number"
@@ -85,7 +124,7 @@ export function RuleForm({
 
       <div>
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-          Description
+          Description<InfoIcon fieldKey="description" />
         </label>
         <input
           type="text"
@@ -101,7 +140,7 @@ export function RuleForm({
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Merchant Contains
+              Merchant Contains<InfoIcon fieldKey="match_merchant_contains" />
             </label>
             <input
               type="text"
@@ -113,7 +152,7 @@ export function RuleForm({
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Merchant Exact Match
+              Merchant Exact Match<InfoIcon fieldKey="match_merchant_exact" />
             </label>
             <input
               type="text"
@@ -125,7 +164,7 @@ export function RuleForm({
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Amount Min ($)
+              Amount Min ($)<InfoIcon fieldKey="match_amount_min" />
             </label>
             <input
               type="number"
@@ -138,7 +177,7 @@ export function RuleForm({
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Amount Max ($)
+              Amount Max ($)<InfoIcon fieldKey="match_amount_max" />
             </label>
             <input
               type="number"
@@ -151,7 +190,7 @@ export function RuleForm({
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Direction
+              Direction<InfoIcon fieldKey="match_direction" />
             </label>
             <select
               value={formData.match_direction}
@@ -171,7 +210,7 @@ export function RuleForm({
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Category *
+              Category *<InfoIcon fieldKey="assign_category_id" />
             </label>
             <select
               value={formData.assign_category_id}

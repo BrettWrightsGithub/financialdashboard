@@ -1,7 +1,22 @@
 ---
 description: Implement pending transaction ID tracking and cursor-based sync to preserve user categorizations across pending→posted transitions per `docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md` (TI-01, TI-02).
 auto_execution_mode: 1
+status: COMPLETED
+completed_date: 2026-01-02
 ---
+
+## Completion Summary
+
+**Done:** Implemented pending transaction sync and handover logic.
+
+- Created `sync_state` table in migration - cursor tracking per account/connection
+- Created `fn_handle_pending_handover()` stored procedure - preserves user categorizations
+- Created trigger `trg_handle_pending_handover` - fires on transaction INSERT
+- Created `lib/sync/plaidSync.ts` - Status queries, sync trigger wrapper
+- Created `app/api/sync/trigger/route.ts` - Manual sync trigger and status API
+- Created `docs/sync/plaid_sync.md` - Documentation
+
+**Note:** N8n handles actual Plaid API calls. Next.js provides UI and triggers.
 
 ## Testing Reference
 

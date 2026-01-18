@@ -1,0 +1,13 @@
+{
+  "experimental": {
+    "introspectionAgentSettings": {
+      "enabled": true
+    }
+  },
+  "general": {
+    "enablePromptCompletion": true
+  },
+  "ide": {
+    "enabled": true
+  }
+}

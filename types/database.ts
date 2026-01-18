@@ -59,11 +59,13 @@ export interface Account {
 export interface Category {
   id: string;
   name: string;
-  life_group: string;
-  flow_type: FlowType;
   cashflow_group: CashflowGroup;
-  is_active: boolean;
+  description: string | null;
+  color: string | null;
+  icon: string | null;
   sort_order: number;
+  is_active: boolean;
+  created_at: string;
 }
 
 // Transaction from transactions table
@@ -142,6 +144,14 @@ export interface ExpectedInflow {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  // Joined data from API responses
+  categories?: Category | null;
+  counterparties?: {
+    id: string;
+    name: string;
+    type: string;
+    notes: string | null;
+  } | null;
 }
 
 // Budget Target from budget_targets table
@@ -249,12 +259,37 @@ export interface CategorizationRuleWithCategory extends CategorizationRule {
 
 // Result from categorization waterfall
 export interface WaterfallResult {
+  batch_id?: string;
   processed: number;
   rules_applied: number;
   memory_applied: number;
   plaid_applied: number;
   skipped_locked: number;
   uncategorized: number;
+}
+
+// Result from undo batch operation
+export interface UndoBatchResult {
+  success: boolean;
+  batch_id?: string;
+  reverted?: number;
+  skipped_locked?: number;
+  already_reverted?: number;
+  error?: string;
+}
+
+// Categorization statistics
+export interface CategorizationStats {
+  date_range: {
+    start: string;
+    end: string;
+  };
+  total: number;
+  categorized: number;
+  uncategorized: number;
+  locked: number;
+  by_source: Record<string, number>;
+  categorization_rate: number;
 }
 
 // Category source types

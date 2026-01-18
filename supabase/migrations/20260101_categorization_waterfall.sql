@@ -1,4 +1,27 @@
--- Categorization Waterfall Stored Procedure
+-- ============================================================
+-- MIGRATION: Categorization Waterfall Stored Procedure
+-- ============================================================
+-- 
+-- FILE: 20260101_categorization_waterfall.sql
+-- STATUS: ✅ DEPLOYED (Applied to Supabase production)
+-- DEPLOYED: 2026-01-01 (manually via Supabase SQL Editor)
+-- 
+-- PURPOSE:
+--   Creates the core categorization waterfall function that applies
+--   the "Waterfall of Truth" logic: Rules → Payee Memory → Plaid defaults.
+--
+-- CREATES:
+--   - fn_run_categorization_waterfall(uuid[]) -> jsonb
+--   - fn_rule_matches_transaction(categorization_rules, transactions) -> boolean
+--
+-- SHOULD I RUN THIS AGAIN?
+--   NO - This is already deployed. Running it again is safe (uses CREATE OR REPLACE)
+--   but unnecessary. See 20260103_stored_procedures_enhanced.sql for the upgraded
+--   version that adds batch tracking and audit logging.
+--
+-- SUPERSEDED BY: 20260103_stored_procedures_enhanced.sql (when deployed)
+--
+-- ============================================================
 -- Implements the rule engine logic per docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md
 
 -- Drop existing function if it exists

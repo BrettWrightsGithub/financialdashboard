@@ -9,12 +9,12 @@ import type { TransactionFilters as FilterType, TransactionWithDetails, Category
 export default function TransactionsPage() {
   const [filters, setFilters] = useState<FilterType>({
     dateRange: {
-      start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0],
+      start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       end: new Date().toISOString().split("T")[0],
     },
     accountId: null,
     cashflowGroup: null,
-    hideTransfers: false,
+    hideTransfers: true,
     hidePassThrough: false,
     searchQuery: "",
   });

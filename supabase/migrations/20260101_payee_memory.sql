@@ -1,4 +1,35 @@
--- Payee Memory Table for learning from user categorizations
+-- ============================================================
+-- MIGRATION: Payee Memory Table and Functions
+-- ============================================================
+-- 
+-- FILE: 20260101_payee_memory.sql
+-- STATUS: ✅ DEPLOYED (Applied to Supabase production)
+-- DEPLOYED: 2026-01-01 (manually via Supabase SQL Editor)
+-- 
+-- PURPOSE:
+--   Creates the payee memory system that learns from user categorizations.
+--   When a user manually categorizes a transaction, the payee→category
+--   mapping is saved and applied to future transactions from the same payee.
+--
+-- CREATES:
+--   Tables:
+--   - payee_category_mappings (stores learned payee→category mappings)
+--   
+--   Functions:
+--   - fn_normalize_payee_name(text) -> text
+--   - fn_save_payee_mapping(text, uuid) -> uuid
+--   - fn_get_payee_mapping(text) -> table
+--   - fn_apply_user_override(uuid, uuid, boolean) -> jsonb
+--   
+--   Columns (if not exist):
+--   - transactions.category_locked
+--   - transactions.category_source
+--
+-- SHOULD I RUN THIS AGAIN?
+--   NO - Already deployed. Safe to re-run (uses IF NOT EXISTS and CREATE OR REPLACE)
+--   but unnecessary.
+--
+-- ============================================================
 -- Per docs/categorization/official-plan-synthesis_mvp_categorization_ai2.md (FR-06)
 
 -- Create payee_category_mappings table

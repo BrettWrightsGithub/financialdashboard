@@ -10,6 +10,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type { Transaction } from "@/types/database";
+import { logCategoryChange } from "./auditLog";
 
 export interface BulkEditResult {
   success: boolean;
@@ -67,10 +68,10 @@ export async function bulkAssignCategory(
     return { success: false, updated: 0, skipped: 0, error: "Category not found" };
   }
 
-  // Fetch transactions to check locked status and get payee info
+  // Fetch transactions to check locked status, current category, and get payee info
   const { data: transactions, error: fetchError } = await supabase
     .from("transactions")
-    .select("id, description_raw, category_locked")
+    .select("id, description_raw, category_locked, life_category_id")
     .in("id", transaction_ids);
 
   if (fetchError) {
@@ -106,6 +107,21 @@ export async function bulkAssignCategory(
 
   if (updateError) {
     return { success: false, updated: 0, skipped, error: updateError.message };
+  }
+
+  // Log audit entries for each changed transaction (best effort)
+  for (const t of unlocked) {
+    try {
+      await logCategoryChange({
+        transactionId: t.id,
+        previousCategoryId: t.life_category_id || null,
+        newCategoryId: category_id,
+        source: "bulk_edit",
+        changedBy: "user",
+      });
+    } catch (auditError) {
+      console.warn("Audit log insert failed:", auditError);
+    }
   }
 
   // Optionally create payee memory entries for unique payees

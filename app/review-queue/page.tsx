@@ -3,16 +3,21 @@
 import { useState, useEffect, useMemo } from "react";
 import { formatCurrencyPrecise, getCurrentMonth } from "@/lib/cashflow";
 import type { TransactionWithDetails, Category } from "@/types/database";
+import { GroupedCategorySelect } from "@/components/transactions/GroupedCategorySelect";
 
 export default function ReviewQueuePage() {
   const [transactions, setTransactions] = useState<TransactionWithDetails[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [processedIds, setProcessedIds] = useState<Set<string>>(new Set()); // Track processed items
   const [sortBy, setSortBy] = useState<"date" | "confidence" | "amount">("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [processing, setProcessing] = useState(false);
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set()); // Track items currently saving
+  const [showProcessed, setShowProcessed] = useState(true); // Toggle to hide processed
+  const [searchFilter, setSearchFilter] = useState(""); // Text filter
 
   const fetchData = async () => {
     setLoading(true);
@@ -79,9 +84,10 @@ export default function ReviewQueuePage() {
       });
 
       if (res.ok) {
+        // Mark as processed instead of refetching
+        setProcessedIds(prev => new Set([...prev, ...selectedIds]));
         setSelectedIds(new Set());
         setBulkCategoryId("");
-        fetchData();
       }
     } catch (error) {
       console.error("Bulk assign failed:", error);
@@ -106,8 +112,8 @@ export default function ReviewQueuePage() {
       });
 
       if (res.ok) {
+        setProcessedIds(prev => new Set([...prev, ...selectedIds]));
         setSelectedIds(new Set());
-        fetchData();
       }
     } catch (error) {
       console.error("Bulk mark transfer failed:", error);
@@ -131,8 +137,8 @@ export default function ReviewQueuePage() {
       });
 
       if (res.ok) {
+        setProcessedIds(prev => new Set([...prev, ...selectedIds]));
         setSelectedIds(new Set());
-        fetchData();
       }
     } catch (error) {
       console.error("Bulk approve failed:", error);
@@ -142,6 +148,8 @@ export default function ReviewQueuePage() {
   };
 
   const handleQuickCategory = async (transactionId: string, categoryId: string) => {
+    // Add to saving state immediately
+    setSavingIds(prev => new Set([...prev, transactionId]));
     try {
       const res = await fetch(`/api/transactions/${transactionId}/override`, {
         method: "POST",
@@ -150,10 +158,24 @@ export default function ReviewQueuePage() {
       });
 
       if (res.ok) {
-        fetchData();
+        // Update the local transaction state with the new category
+        const selectedCat = categories.find(c => c.id === categoryId);
+        setTransactions(prev => prev.map(t => 
+          t.id === transactionId 
+            ? { ...t, life_category_id: categoryId, category_name: selectedCat?.name || t.category_name }
+            : t
+        ));
+        setProcessedIds(prev => new Set([...prev, transactionId]));
       }
     } catch (error) {
       console.error("Quick category failed:", error);
+    } finally {
+      // Remove from saving state
+      setSavingIds(prev => {
+        const next = new Set(prev);
+        next.delete(transactionId);
+        return next;
+      });
     }
   };
 
@@ -170,29 +192,57 @@ export default function ReviewQueuePage() {
       </div>
 
       {/* Stats Bar */}
-      <div className="flex gap-4">
+      <div className="flex gap-4 flex-wrap">
         <div className="card px-4 py-3">
           <div className="text-2xl font-bold text-slate-900 dark:text-white">
-            {transactions.length}
+            {transactions.filter(t => !processedIds.has(t.id)).length}
           </div>
           <div className="text-sm text-slate-500">Need Review</div>
         </div>
         <div className="card px-4 py-3">
           <div className="text-2xl font-bold text-amber-600">
-            {transactions.filter((t) => !t.life_category_id).length}
+            {transactions.filter((t) => !t.life_category_id && !processedIds.has(t.id)).length}
           </div>
           <div className="text-sm text-slate-500">Uncategorized</div>
         </div>
         <div className="card px-4 py-3">
-          <div className="text-2xl font-bold text-blue-600">
-            {transactions.filter((t) => t.life_category_id && (t.category_confidence ?? 1) < 0.7).length}
+          <div className="text-2xl font-bold text-green-600">
+            {processedIds.size}
           </div>
-          <div className="text-sm text-slate-500">Low Confidence</div>
+          <div className="text-sm text-slate-500">Processed</div>
         </div>
+        {processedIds.size > 0 && (
+          <div className="card px-4 py-3 flex items-center gap-3">
+            <button
+              onClick={() => setShowProcessed(!showProcessed)}
+              className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              {showProcessed ? "Hide" : "Show"} Processed
+            </button>
+            <button
+              onClick={() => {
+                setProcessedIds(new Set());
+                fetchData();
+              }}
+              className="text-sm text-slate-600 dark:text-slate-400 hover:text-red-600"
+            >
+              Clear & Refresh
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Sort Controls */}
-      <div className="flex items-center gap-4">
+      {/* Filter & Sort Controls */}
+      <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex-1 min-w-[200px]">
+          <input
+            type="text"
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+            placeholder="Filter by description, account, or category..."
+            className="w-full px-3 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+          />
+        </div>
         <label className="text-sm text-slate-600 dark:text-slate-400">Sort by:</label>
         <select
           value={sortBy}
@@ -221,18 +271,13 @@ export default function ReviewQueuePage() {
           </span>
 
           <div className="flex items-center gap-2">
-            <select
+            <GroupedCategorySelect
+              categories={categories}
               value={bulkCategoryId}
-              onChange={(e) => setBulkCategoryId(e.target.value)}
+              onChange={setBulkCategoryId}
+              placeholder="Assign category..."
               className="select text-sm py-1"
-            >
-              <option value="">Assign category...</option>
-              {categories.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  {cat.name}
-                </option>
-              ))}
-            </select>
+            />
             <button
               onClick={handleBulkAssignCategory}
               disabled={!bulkCategoryId || processing}
@@ -241,14 +286,6 @@ export default function ReviewQueuePage() {
               Apply
             </button>
           </div>
-
-          <button
-            onClick={handleBulkApprove}
-            disabled={processing}
-            className="btn text-sm py-1 px-3 bg-green-600 text-white hover:bg-green-700"
-          >
-            Approve Selected
-          </button>
 
           <button
             onClick={handleBulkMarkTransfer}
@@ -304,20 +341,39 @@ export default function ReviewQueuePage() {
                   </td>
                 </tr>
               ) : (
-                transactions.map((t) => (
+                transactions
+                  .filter(t => showProcessed || !processedIds.has(t.id))
+                  .filter(t => {
+                    if (!searchFilter.trim()) return true;
+                    const search = searchFilter.toLowerCase();
+                    return (
+                      (t.description_clean || t.description_raw || "").toLowerCase().includes(search) ||
+                      (t.account_name || "").toLowerCase().includes(search) ||
+                      (t.category_name || "").toLowerCase().includes(search) ||
+                      (t.counterparty_name || "").toLowerCase().includes(search)
+                    );
+                  })
+                  .map((t) => {
+                  const isProcessed = processedIds.has(t.id);
+                  const isSaving = savingIds.has(t.id);
+                  return (
                   <tr
                     key={t.id}
                     className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
                       selectedIds.has(t.id) ? "bg-blue-50 dark:bg-blue-900/20" : ""
-                    }`}
+                    } ${isProcessed ? "bg-green-50 dark:bg-green-900/10 opacity-60" : ""}`}
                   >
                     <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(t.id)}
-                        onChange={() => toggleSelect(t.id)}
-                        className="rounded"
-                      />
+                      {isProcessed ? (
+                        <span className="text-green-600 dark:text-green-400">✓</span>
+                      ) : (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(t.id)}
+                          onChange={() => toggleSelect(t.id)}
+                          className="rounded"
+                        />
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300 whitespace-nowrap">
                       {new Date(t.date).toLocaleDateString("en-US", {
@@ -370,25 +426,32 @@ export default function ReviewQueuePage() {
                       {formatCurrencyPrecise(t.amount)}
                     </td>
                     <td className="px-4 py-3">
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            handleQuickCategory(t.id, e.target.value);
-                          }
-                        }}
-                        className="select text-xs py-1"
-                      >
-                        <option value="">Assign...</option>
-                        {categories.map((cat) => (
-                          <option key={cat.id} value={cat.id}>
-                            {cat.name}
-                          </option>
-                        ))}
-                      </select>
+                      {isSaving ? (
+                        <div className="flex items-center gap-2 text-xs text-blue-600 dark:text-blue-400">
+                          <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Saving...
+                        </div>
+                      ) : (
+                        <GroupedCategorySelect
+                          categories={categories}
+                          value=""
+                          onChange={(categoryId) => {
+                            if (categoryId) {
+                              handleQuickCategory(t.id, categoryId);
+                            }
+                          }}
+                          placeholder="Assign..."
+                          className="select text-xs py-1"
+                          disabled={isProcessed}
+                        />
+                      )}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

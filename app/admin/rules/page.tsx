@@ -4,6 +4,23 @@ import { useState, useEffect, useCallback } from "react";
 import { RuleForm, emptyFormData, type RuleFormData } from "@/components/admin/RuleForm";
 import type { CategorizationRuleWithCategory, Category } from "@/types/database";
 
+interface PreviewResult {
+  ruleId: string;
+  ruleName: string;
+  matchingTransactions: Array<{
+    id: string;
+    date: string;
+    description: string;
+    amount: number;
+    currentCategory: string | null;
+    newCategory: string;
+    isLocked: boolean;
+  }>;
+  totalMatching: number;
+  wouldChange: number;
+  wouldSkipLocked: number;
+}
+
 export default function RulesAdminPage() {
   const [rules, setRules] = useState<CategorizationRuleWithCategory[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -13,6 +30,12 @@ export default function RulesAdminPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [formData, setFormData] = useState<RuleFormData>(emptyFormData);
   const [saving, setSaving] = useState(false);
+  
+  // Dry run preview state
+  const [previewingRule, setPreviewingRule] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const fetchRules = useCallback(async () => {
     try {
@@ -141,6 +164,48 @@ export default function RulesAdminPage() {
       await fetchRules();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to toggle rule");
+    }
+  };
+
+  // Dry run preview with guardrails
+  const handlePreview = async (ruleId: string) => {
+    // Close any existing preview first
+    if (previewingRule === ruleId) {
+      setPreviewingRule(null);
+      setPreviewResult(null);
+      return;
+    }
+
+    setPreviewingRule(ruleId);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewResult(null);
+
+    try {
+      // Use last 90 days as default range for safety
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 90);
+
+      const res = await fetch("/api/rules/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rule_id: ruleId,
+          date_range: {
+            start: startDate.toISOString(),
+            end: endDate.toISOString(),
+          },
+        }),
+      });
+
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setPreviewResult(data);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : "Preview failed");
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -281,6 +346,18 @@ export default function RulesAdminPage() {
                   </div>
                   <div className="flex items-center gap-2 ml-4">
                     <button
+                      onClick={() => handlePreview(rule.id)}
+                      disabled={previewLoading && previewingRule === rule.id}
+                      className={`p-2 rounded-lg transition-colors ${
+                        previewingRule === rule.id
+                          ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+                          : "text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                      }`}
+                      title="Preview (Dry Run)"
+                    >
+                      {previewLoading && previewingRule === rule.id ? "⏳" : "👁"}
+                    </button>
+                    <button
                       onClick={() => handleToggleActive(rule)}
                       className={`p-2 rounded-lg transition-colors ${
                         rule.is_active
@@ -306,6 +383,114 @@ export default function RulesAdminPage() {
                       ✕
                     </button>
                   </div>
+                </div>
+              )}
+              
+              {/* Preview Results Panel */}
+              {previewingRule === rule.id && (
+                <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                  {previewLoading ? (
+                    <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Running dry run preview (last 90 days)...
+                    </div>
+                  ) : previewError ? (
+                    <div className="text-red-600 dark:text-red-400 text-sm">
+                      Error: {previewError}
+                    </div>
+                  ) : previewResult ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-4 text-sm">
+                        <span className="font-medium text-slate-700 dark:text-slate-300">
+                          Dry Run Results (last 90 days)
+                        </span>
+                        <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
+                          {previewResult.totalMatching} matches
+                        </span>
+                        <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded">
+                          {previewResult.wouldChange} would change
+                        </span>
+                        {previewResult.wouldSkipLocked > 0 && (
+                          <span className="px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded">
+                            {previewResult.wouldSkipLocked} locked (skipped)
+                          </span>
+                        )}
+                      </div>
+                      
+                      {previewResult.matchingTransactions.length > 0 ? (
+                        <div className="max-h-60 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg">
+                          <table className="w-full text-xs">
+                            <thead className="bg-slate-50 dark:bg-slate-900 sticky top-0">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-400">Date</th>
+                                <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-400">Description</th>
+                                <th className="px-3 py-2 text-right font-medium text-slate-600 dark:text-slate-400">Amount</th>
+                                <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-400">Current</th>
+                                <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-400">New</th>
+                                <th className="px-3 py-2 text-center font-medium text-slate-600 dark:text-slate-400">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                              {previewResult.matchingTransactions.slice(0, 50).map((tx) => (
+                                <tr key={tx.id} className={tx.isLocked ? "opacity-50" : ""}>
+                                  <td className="px-3 py-2 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                                    {new Date(tx.date).toLocaleDateString()}
+                                  </td>
+                                  <td className="px-3 py-2 text-slate-900 dark:text-white max-w-[200px] truncate">
+                                    {tx.description}
+                                  </td>
+                                  <td className={`px-3 py-2 text-right whitespace-nowrap ${
+                                    tx.amount >= 0 ? "text-green-600" : "text-slate-900 dark:text-white"
+                                  }`}>
+                                    ${Math.abs(tx.amount).toFixed(2)}
+                                  </td>
+                                  <td className="px-3 py-2 text-slate-600 dark:text-slate-400">
+                                    {tx.currentCategory || "—"}
+                                  </td>
+                                  <td className="px-3 py-2 text-blue-600 dark:text-blue-400 font-medium">
+                                    {tx.newCategory}
+                                  </td>
+                                  <td className="px-3 py-2 text-center">
+                                    {tx.isLocked ? (
+                                      <span className="text-amber-600" title="Locked - will be skipped">🔒</span>
+                                    ) : tx.currentCategory === tx.newCategory ? (
+                                      <span className="text-slate-400" title="Already correct">—</span>
+                                    ) : (
+                                      <span className="text-green-600" title="Will change">✓</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {previewResult.matchingTransactions.length > 50 && (
+                            <div className="px-3 py-2 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700">
+                              Showing 50 of {previewResult.matchingTransactions.length} matches
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-slate-500 dark:text-slate-400 py-2">
+                          No matching transactions found in the last 90 days.
+                        </div>
+                      )}
+                      
+                      <div className="flex items-center gap-2 pt-2">
+                        <button
+                          onClick={() => { setPreviewingRule(null); setPreviewResult(null); }}
+                          className="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+                        >
+                          Close Preview
+                        </button>
+                        <span className="text-xs text-slate-400 dark:text-slate-500">
+                          This is a dry run — no changes have been made
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>

@@ -45,7 +45,7 @@ export async function getReviewQueueTransactions(
     .or(
       `life_category_id.is.null,` +
       `category_confidence.lt.${LOW_CONFIDENCE_THRESHOLD},` +
-      `and(category_source.eq.plaid,amount.lt.-${LARGE_AMOUNT_THRESHOLD})`
+      `and(category_source.eq.plaid,amount.lt.${-LARGE_AMOUNT_THRESHOLD})`
     );
 
   // Filter by month if provided

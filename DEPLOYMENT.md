@@ -1,60 +1,102 @@
-# Production Deployment Guide
+# Deployment Guide
 
-This guide covers deploying the Financial Command Center to production using Docker.
+This guide covers setting up and deploying the Financial Dashboard.
 
 ## Prerequisites
 
-- Docker 20.10+ and Docker Compose 2.0+
-- A Supabase project with the database schema applied
-- Environment variables configured
+- Node.js 20+
+- A Supabase project
+- (Optional) Docker 20.10+ and Docker Compose 2.0+
 
-## Quick Start
-
-### 1. Configure Environment Variables
-
-Copy the example environment file and fill in your values:
+## Quick Start (Docker)
 
 ```bash
+# 1. Copy environment template
 cp .env.local.example .env.local
+
+# 2. Edit .env.local with your Supabase credentials
+# Get these from https://app.supabase.com/project/_/settings/api
+
+# 3. Build and start
+docker-compose up -d --build
+
+# 4. Check health
+curl http://localhost:3003/api/health
 ```
 
-Edit `.env.local` with your actual credentials:
+The application will be available at `http://localhost:3003`
+
+## Quick Start (Local Dev)
 
 ```bash
-# Required: Supabase Configuration
+# 1. Install dependencies
+npm install
+
+# 2. Configure environment
+cp .env.local.example .env.local
+# Edit .env.local with your Supabase credentials
+
+# 3. Run dev server
+npm run dev
+```
+
+Open http://localhost:3000
+
+## Environment Variables
+
+Required in `.env.local`:
+
+```bash
+# Supabase Configuration
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
 
-# Optional: Plaid (if using Plaid sync)
-# PLAID_CLIENT_ID=your-plaid-client-id
-# PLAID_SECRET=your-plaid-secret
-# PLAID_ENV=sandbox
-
-NODE_ENV=production
+# Environment
+NODE_ENV=development  # or production
 ```
 
-**Security Note**: Never commit `.env.local` to version control. It contains sensitive credentials.
+**Security Note:** Never commit `.env.local` to version control.
 
-### 2. Build and Run
+## Docker Deployment
 
-Build and start the container:
+### Build and Run
 
 ```bash
 docker-compose up -d --build
 ```
 
-The application will be available at `http://localhost:3003`
-
-### 3. Verify Deployment
-
-Check the health endpoint:
+### Common Docker Commands
 
 ```bash
-curl http://localhost:3003/api/health
+# Stop containers
+docker-compose down
+
+# View logs
+docker-compose logs -f financial-dashboard
+
+# Rebuild after code changes
+docker-compose up -d --build
+
+# Check container status
+docker-compose ps
+
+# Execute command in container
+docker-compose exec financial-dashboard sh
 ```
 
-Expected response (200 OK):
+### Docker Architecture
+
+The Dockerfile uses a 3-stage build process:
+
+1. **deps** — Installs dependencies
+2. **builder** — Builds Next.js with standalone output
+3. **runner** — Production runtime with minimal dependencies (~150MB)
+
+### Health Check
+
+The health endpoint is available at `/api/health`:
+
 ```json
 {
   "timestamp": "2026-01-04T06:59:00.000Z",
@@ -69,86 +111,68 @@ Expected response (200 OK):
 }
 ```
 
-View container logs:
+## Supabase Setup
+
+### 1. Create Project
+
+1. Go to https://supabase.com and create a new project
+2. Wait for the database to be ready
+
+### 2. Apply Migrations
 
 ```bash
-docker-compose logs -f financial-dashboard
+# Install Supabase CLI (if not installed)
+npm install -g supabase
+
+# Link your project
+supabase link --project-ref your-project-id
+
+# Apply migrations
+supabase db push
 ```
 
-## Docker Architecture
+Or manually run the migration files from `supabase/migrations/` in the Supabase SQL editor.
 
-### Multi-Stage Build
+### 3. Configure Row Level Security (RLS)
 
-The Dockerfile uses a 3-stage build process for optimal image size:
+Ensure RLS policies are enabled on all tables. See `supabase/migrations/` for policy examples.
 
-1. **deps**: Installs dependencies
-2. **builder**: Builds the Next.js application with standalone output
-3. **runner**: Production runtime with minimal dependencies (~150MB)
+## Production Deployment
 
-### Security Features
+### Self-Hosted (VPS)
 
-- Non-root user (`nextjs:nodejs`) runs the application
-- Minimal Alpine Linux base image
-- No dev dependencies in production image
-- Environment variables never baked into image
+1. Install Docker and Docker Compose on your server
+2. Clone repository and configure `.env.local`
+3. Run `docker-compose up -d --build`
+4. Configure reverse proxy (nginx/Caddy) for HTTPS
+5. Set up automatic updates and monitoring
 
-### Standalone Output
+### Cloud Platforms
 
-Next.js standalone mode bundles only required dependencies, reducing:
-- Image size by ~70%
-- Attack surface
-- Startup time
+#### Vercel (Recommended for Next.js)
 
-## Production Best Practices
+1. Connect your GitHub repository to Vercel
+2. Configure environment variables in Vercel dashboard
+3. Deploy — Vercel handles build and hosting automatically
 
-### Health Checks
-
-Docker Compose includes automatic health checks:
-- Checks `/api/health` every 30 seconds
-- 3 retries before marking unhealthy
-- 40-second startup grace period
-
-### Logging
-
-Logs are automatically rotated:
-- Max file size: 10MB
-- Max files: 3 (30MB total)
-
-View logs:
-```bash
-docker-compose logs -f --tail=100 financial-dashboard
-```
-
-### Updates and Rollbacks
-
-To update to a new version:
+#### Google Cloud Run
 
 ```bash
-# Pull latest code
-git pull
+# Build image
+docker build -t gcr.io/PROJECT_ID/financial-dashboard .
 
-# Rebuild and restart
-docker-compose up -d --build
+# Push
+docker push gcr.io/PROJECT_ID/financial-dashboard
+
+# Deploy
+gcloud run deploy --image gcr.io/PROJECT_ID/financial-dashboard
 ```
 
-To rollback:
+#### AWS ECS/Fargate
 
-```bash
-# Stop current container
-docker-compose down
-
-# Checkout previous version
-git checkout <previous-commit>
-
-# Rebuild
-docker-compose up -d --build
-```
-
-### Backup Strategy
-
-**Database**: Supabase handles automatic backups. Configure point-in-time recovery in your Supabase project settings.
-
-**Environment Variables**: Keep a secure backup of `.env.local` in a password manager or secrets vault.
+- Use the Dockerfile as-is
+- Store secrets in AWS Secrets Manager
+- Configure ALB for load balancing
 
 ## Troubleshooting
 
@@ -173,133 +197,71 @@ docker-compose exec financial-dashboard node -e "console.log(process.env.NEXT_PU
 
 2. Test health endpoint manually:
 ```bash
-docker-compose exec financial-dashboard wget -O- http://localhost:3000/api/health
+curl http://localhost:3003/api/health
 ```
 
-### High Memory Usage
+### Clear Docker Cache
 
-Next.js standalone mode is optimized, but if you see high memory:
-
-1. Check for memory leaks in custom code
-2. Limit container memory in `docker-compose.yml`:
-```yaml
-services:
-  financial-dashboard:
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-```
-
-### Build Failures
-
-Clear Docker cache and rebuild:
 ```bash
 docker-compose down
 docker system prune -a
 docker-compose up -d --build
 ```
 
-## Monitoring
-
-### Container Status
-
-```bash
-docker-compose ps
-```
-
-### Resource Usage
-
-```bash
-docker stats financial-command-center
-```
-
-### Application Metrics
-
-The health endpoint provides:
-- Supabase connection status
-- Response latency
-- Overall system health
-
-Consider integrating with monitoring tools:
-- Prometheus + Grafana
-- Datadog
-- New Relic
-- Sentry (for error tracking)
-
-## Production Deployment Platforms
-
-### Self-Hosted (VPS/Dedicated Server)
-
-1. Install Docker and Docker Compose on your server
-2. Clone repository and configure `.env.local`
-3. Run `docker-compose up -d --build`
-4. Configure reverse proxy (nginx/Caddy) for HTTPS
-5. Set up automatic updates and monitoring
-
-### Cloud Platforms
-
-#### AWS ECS/Fargate
-- Use the Dockerfile as-is
-- Store secrets in AWS Secrets Manager
-- Configure ALB for load balancing
-
-#### Google Cloud Run
-- Build: `docker build -t gcr.io/PROJECT_ID/financial-dashboard .`
-- Push: `docker push gcr.io/PROJECT_ID/financial-dashboard`
-- Deploy: `gcloud run deploy --image gcr.io/PROJECT_ID/financial-dashboard`
-
-#### Azure Container Instances
-- Build and push to Azure Container Registry
-- Deploy using Azure Portal or CLI
-
-#### DigitalOcean App Platform
-- Connect GitHub repository
-- Use Dockerfile for deployment
-- Configure environment variables in dashboard
-
 ## Security Checklist
 
 - [ ] `.env.local` is not committed to git
 - [ ] Supabase RLS policies are enabled
 - [ ] Service role key is only used server-side
-- [ ] HTTPS is configured (via reverse proxy)
+- [ ] HTTPS is configured in production
 - [ ] Container runs as non-root user
-- [ ] Regular security updates applied
-- [ ] Secrets stored securely (not in plain text)
 - [ ] Database backups configured
 - [ ] Monitoring and alerting set up
 
-## Performance Optimization
+## Monitoring
 
-### Image Optimization
+### Check Container Status
 
-Next.js automatically optimizes images. For external images, add domains to `next.config.ts`:
-
-```typescript
-images: {
-  remotePatterns: [
-    {
-      protocol: 'https',
-      hostname: 'example.com',
-    },
-  ],
-}
+```bash
+docker-compose ps
 ```
 
-### Caching
+### View Resource Usage
 
-Consider adding Redis for:
-- Session storage
-- API response caching
-- Rate limiting
+```bash
+docker stats financial-command-center
+```
 
-### CDN
+### Application Logs
 
-For static assets, consider:
-- Cloudflare
-- AWS CloudFront
-- Vercel Edge Network
+```bash
+docker-compose logs -f --tail=100 financial-dashboard
+```
+
+## Updates
+
+To update to a new version:
+
+```bash
+# Pull latest code
+git pull
+
+# Rebuild and restart
+docker-compose up -d --build
+```
+
+To rollback:
+
+```bash
+# Stop current container
+docker-compose down
+
+# Checkout previous version
+git checkout <previous-commit>
+
+# Rebuild
+docker-compose up -d --build
+```
 
 ## Support
 
@@ -307,8 +269,3 @@ For issues specific to:
 - **Next.js**: https://nextjs.org/docs
 - **Docker**: https://docs.docker.com
 - **Supabase**: https://supabase.com/docs
-
-For application-specific issues, check:
-- Application logs: `docker-compose logs`
-- Health endpoint: `/api/health`
-- Database logs in Supabase dashboard

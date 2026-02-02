@@ -40,3 +40,14 @@ next-env.d.ts
 docker/n8n/certs/
 docker/n8n/.n8n/
 teller/certs/
+
+# IDE and AI assistant configs
+.windsurf/
+.gemini/
+.windsurfrules
+
+# Dev artifacts at root
+teller-enrollment.html
+validation_query.sql
+create-icons.html
+test-setup.ts

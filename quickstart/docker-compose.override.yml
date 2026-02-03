@@ -1,7 +1,0 @@
-services:
-  frontend:
-    ports:
-      - "3002:3000"
-  node:
-    ports:
-      - "8001:8000"

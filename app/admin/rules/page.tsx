@@ -36,6 +36,9 @@ export default function RulesAdminPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [applyingRule, setApplyingRule] = useState<string | null>(null);
+  const [lastBatchByRule, setLastBatchByRule] = useState<Record<string, string>>({});
+  const [undoingBatch, setUndoingBatch] = useState<string | null>(null);
 
   const fetchRules = useCallback(async () => {
     try {
@@ -206,6 +209,70 @@ export default function RulesAdminPage() {
       setPreviewError(err instanceof Error ? err.message : "Preview failed");
     } finally {
       setPreviewLoading(false);
+    }
+  };
+
+  const handleApplyPreview = async (ruleId: string) => {
+    if (!previewResult || previewResult.matchingTransactions.length === 0) return;
+
+    setApplyingRule(ruleId);
+    try {
+      const transactionIds = previewResult.matchingTransactions
+        .filter((tx) => !tx.isLocked && tx.currentCategory !== tx.newCategory)
+        .map((tx) => tx.id);
+
+      if (transactionIds.length === 0) {
+        alert("No eligible transactions to backfill.");
+        return;
+      }
+
+      const res = await fetch("/api/rules/apply-retroactive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rule_id: ruleId,
+          transaction_ids: transactionIds,
+          created_by: "rules_admin",
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Failed to apply backfill");
+      }
+
+      setLastBatchByRule((prev) => ({ ...prev, [ruleId]: data.batch_id }));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to apply backfill");
+    } finally {
+      setApplyingRule(null);
+    }
+  };
+
+  const handleUndoBatch = async (ruleId: string) => {
+    const batchId = lastBatchByRule[ruleId];
+    if (!batchId) return;
+
+    setUndoingBatch(batchId);
+    try {
+      const res = await fetch("/api/rules/undo-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch_id: batchId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Failed to undo batch");
+      }
+      setLastBatchByRule((prev) => {
+        const next = { ...prev };
+        delete next[ruleId];
+        return next;
+      });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to undo batch");
+    } finally {
+      setUndoingBatch(null);
     }
   };
 
@@ -485,6 +552,22 @@ export default function RulesAdminPage() {
                         >
                           Close Preview
                         </button>
+                        <button
+                          onClick={() => handleApplyPreview(rule.id)}
+                          disabled={applyingRule === rule.id || previewResult.wouldChange === 0}
+                          className="px-3 py-1.5 text-xs rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                        >
+                          {applyingRule === rule.id ? "Applying..." : `Apply Backfill (${previewResult.wouldChange})`}
+                        </button>
+                        {lastBatchByRule[rule.id] && (
+                          <button
+                            onClick={() => handleUndoBatch(rule.id)}
+                            disabled={undoingBatch === lastBatchByRule[rule.id]}
+                            className="px-3 py-1.5 text-xs rounded bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+                          >
+                            {undoingBatch === lastBatchByRule[rule.id] ? "Undoing..." : "Undo Last Batch"}
+                          </button>
+                        )}
                         <span className="text-xs text-slate-400 dark:text-slate-500">
                           This is a dry run — no changes have been made
                         </span>

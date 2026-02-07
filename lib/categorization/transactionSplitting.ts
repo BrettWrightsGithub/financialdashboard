@@ -274,6 +274,58 @@ export async function getSplitChildren(parentId: string): Promise<Transaction[]>
 }
 
 /**
+ * Delete a single split child and normalize parent when needed.
+ */
+export async function deleteSplitChild(childId: string): Promise<{ success: boolean; parentId?: string; error?: string }> {
+  if (!supabase) {
+    return { success: false, error: "Supabase not configured" };
+  }
+
+  const { data: child, error: fetchError } = await supabase
+    .from("transactions")
+    .select("id, parent_transaction_id")
+    .eq("id", childId)
+    .eq("is_split_child", true)
+    .maybeSingle();
+
+  if (fetchError || !child?.parent_transaction_id) {
+    return { success: false, error: fetchError?.message || "Split child not found" };
+  }
+
+  const parentId = child.parent_transaction_id;
+
+  const { error: deleteError } = await supabase
+    .from("transactions")
+    .delete()
+    .eq("id", childId);
+
+  if (deleteError) {
+    return { success: false, error: deleteError.message };
+  }
+
+  const { data: siblings, error: siblingError } = await supabase
+    .from("transactions")
+    .select("id")
+    .eq("parent_transaction_id", parentId);
+
+  if (siblingError) {
+    return { success: false, error: siblingError.message };
+  }
+
+  if (!siblings || siblings.length === 0) {
+    await supabase
+      .from("transactions")
+      .update({
+        is_split_parent: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", parentId);
+  }
+
+  return { success: true, parentId };
+}
+
+/**
  * Check if a transaction has been split (has children)
  */
 export async function hasSplitChildren(transactionId: string): Promise<boolean> {

@@ -34,9 +34,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const generatedDescription =
+      body.description ||
+      [
+        body.match_merchant_contains ? `Contains "${body.match_merchant_contains}"` : null,
+        body.match_merchant_exact ? `Exact "${body.match_merchant_exact}"` : null,
+        body.match_direction ? `Direction: ${body.match_direction}` : null,
+      ]
+        .filter(Boolean)
+        .join(" | ") ||
+      "Auto-generated categorization rule";
+
     const rule = await createRule({
       name: body.name,
-      description: body.description || null,
+      description: generatedDescription,
       priority: body.priority ?? 0,
       is_active: body.is_active ?? true,
       match_merchant_contains: body.match_merchant_contains || null,

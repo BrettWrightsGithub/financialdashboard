@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Dashboard E2E Tests', () => {
   test.beforeEach(async ({ page }) => {
     // Navigate to dashboard
-    await page.goto('http://localhost:3004');
+    await page.goto('/');
     // Wait for page to be fully loaded
     await page.waitForLoadState('networkidle');
   });

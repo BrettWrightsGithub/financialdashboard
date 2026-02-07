@@ -9,7 +9,7 @@ export async function POST(
   try {
     const { id: transactionId } = await params;
     const body = await request.json();
-    const { is_transfer } = body;
+    const { is_transfer, transfer_pair_id = null } = body;
 
     if (typeof is_transfer !== "boolean") {
       return NextResponse.json(
@@ -24,6 +24,9 @@ export async function POST(
       .from("transactions")
       .update({
         is_transfer,
+        transfer_pair_id: is_transfer ? transfer_pair_id : null,
+        transfer_match_source: is_transfer ? "manual" : null,
+        transfer_match_confidence: is_transfer ? 1.0 : null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", transactionId)

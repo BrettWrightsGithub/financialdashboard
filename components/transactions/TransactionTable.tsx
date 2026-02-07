@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useMemo, Fragment } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { formatCurrencyPrecise } from "@/lib/cashflow";
-import { updateTransactionCategory, updateTransactionFlags } from "@/lib/queries";
+import { updateTransactionFlags } from "@/lib/queries";
 import { CategorySourceBadge } from "./CategorySourceBadge";
 import { SplitModal } from "./SplitModal";
 import type { TransactionWithDetails, Category } from "@/types/database";
 import { AuditHistoryModal } from "./AuditHistoryModal";
 import { GroupedCategorySelect } from "./GroupedCategorySelect";
+import { TransferChainModal } from "./TransferChainModal";
 
 interface TransactionTableProps {
   transactions: TransactionWithDetails[];
@@ -21,6 +22,7 @@ type SortDirection = "asc" | "desc";
 export function TransactionTable({ transactions, categories, onTransactionUpdate }: TransactionTableProps) {
   const [splitModalTransaction, setSplitModalTransaction] = useState<TransactionWithDetails | null>(null);
   const [auditModalTransactionId, setAuditModalTransactionId] = useState<string | null>(null);
+  const [transferModalTransaction, setTransferModalTransaction] = useState<TransactionWithDetails | null>(null);
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
@@ -52,7 +54,7 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
     }
 
     // Get non-child transactions
-    let result: { transaction: TransactionWithDetails; children: TransactionWithDetails[] }[] = [];
+    const result: { transaction: TransactionWithDetails; children: TransactionWithDetails[] }[] = [];
     for (const t of transactions) {
       if (!t.is_split_child) {
         result.push({
@@ -145,6 +147,7 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
                     onSplit={() => setSplitModalTransaction(transaction)}
                     onUnsplit={() => handleUnsplit(transaction.id)}
                     onViewAudit={() => setAuditModalTransactionId(transaction.id)}
+                    onViewTransferChain={() => setTransferModalTransaction(transaction)}
                     isSplitParent={transaction.is_split_parent}
                   />
                   {children.map((child) => (
@@ -154,6 +157,7 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
                       categories={categories}
                       onUpdate={onTransactionUpdate}
                       onViewAudit={() => setAuditModalTransactionId(child.id)}
+                      onViewTransferChain={() => setTransferModalTransaction(child)}
                       isChild
                     />
                   ))}
@@ -187,6 +191,22 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
         />
       )}
 
+      {transferModalTransaction && (
+        <TransferChainModal
+          transaction={transferModalTransaction}
+          isOpen={!!transferModalTransaction}
+          onClose={() => setTransferModalTransaction(null)}
+          onBreakLink={async (transactionId) => {
+            await fetch("/api/transfers/link", {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ transaction_id: transactionId }),
+            });
+            onTransactionUpdate?.();
+          }}
+        />
+      )}
+
       {/* Pagination placeholder */}
       {transactions.length > 0 && (
         <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between text-sm text-slate-600 dark:text-slate-400">
@@ -207,6 +227,7 @@ function TransactionRow({
   onSplit,
   onUnsplit,
   onViewAudit,
+  onViewTransferChain,
   isSplitParent,
   isChild,
 }: {
@@ -216,12 +237,12 @@ function TransactionRow({
   onSplit?: () => void;
   onUnsplit?: () => void;
   onViewAudit?: () => void;
+  onViewTransferChain?: () => void;
   isSplitParent?: boolean;
   isChild?: boolean;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(transaction.life_category_id);
-  const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false); // Brief visual confirmation
   const [showMenu, setShowMenu] = useState(false); // Triple-dot menu state
   const [localFlags, setLocalFlags] = useState({
@@ -245,8 +266,7 @@ function TransactionRow({
   };
 
   const handleCategoryChange = async (newCategoryId: string) => {
-    setSelectedCategory(newCategoryId);
-    setSaving(true);
+    if (!newCategoryId) return;
     try {
       // Use the override API which also sets category_locked and learns payee
       const res = await fetch(`/api/transactions/${transaction.id}/override`, {
@@ -270,8 +290,25 @@ function TransactionRow({
       // Revert on error
       setSelectedCategory(transaction.life_category_id);
     } finally {
-      setSaving(false);
       setIsEditing(false);
+    }
+  };
+
+  const breakTransferLink = async () => {
+    if (!transaction.transfer_pair_id) return;
+    if (!window.confirm("Break this transfer link?")) return;
+
+    try {
+      const res = await fetch("/api/transfers/link", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_id: transaction.id }),
+      });
+      if (res.ok) {
+        onUpdate?.();
+      }
+    } catch (error) {
+      console.error("Failed to break transfer link:", error);
     }
   };
 
@@ -312,15 +349,35 @@ function TransactionRow({
       {/* Category (Editable) */}
       <td className="px-4 py-3">
         {isEditing ? (
-          <GroupedCategorySelect
-            categories={categories}
-            value={selectedCategory || ""}
-            onChange={(value) => {
-              if (value) handleCategoryChange(value);
-            }}
-            placeholder="Select category"
-            className="select text-sm py-1"
-          />
+          <div className="space-y-1">
+            <GroupedCategorySelect
+              categories={categories}
+              value={selectedCategory || ""}
+              onChange={(value) => setSelectedCategory(value || null)}
+              placeholder="Select category"
+              className="select text-sm py-1"
+            />
+            <div className="flex gap-1">
+              <button
+                type="button"
+                className="px-2 py-1 text-xs rounded bg-blue-600 text-white"
+                onClick={() => selectedCategory && handleCategoryChange(selectedCategory)}
+                disabled={!selectedCategory || selectedCategory === transaction.life_category_id}
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                className="px-2 py-1 text-xs rounded bg-slate-200 dark:bg-slate-700"
+                onClick={() => {
+                  setSelectedCategory(transaction.life_category_id);
+                  setIsEditing(false);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="flex items-center gap-2">
             <button
@@ -400,6 +457,14 @@ function TransactionRow({
           >
             B
           </button>
+          {(transaction.transfer_match_confidence || transaction.transfer_match_source) && (
+            <span
+              className="px-1.5 py-0.5 text-[10px] rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200"
+              title={`Matched via ${transaction.transfer_match_source || "unknown"} at ${Math.round((transaction.transfer_match_confidence || 0) * 100)}%`}
+            >
+              {Math.round((transaction.transfer_match_confidence || 0) * 100)}%
+            </span>
+          )}
         </div>
       </td>
 
@@ -438,6 +503,22 @@ function TransactionRow({
                   className="w-full px-3 py-1.5 text-left text-xs text-red-600 dark:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
                 >
                   <span>↩️</span> Unsplit
+                </button>
+              )}
+              {transaction.transfer_pair_id && (
+                <button
+                  onClick={() => { onViewTransferChain?.(); setShowMenu(false); }}
+                  className="w-full px-3 py-1.5 text-left text-xs text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
+                >
+                  <span>🧩</span> View Transfer Chain
+                </button>
+              )}
+              {transaction.transfer_pair_id && (
+                <button
+                  onClick={() => { breakTransferLink(); setShowMenu(false); }}
+                  className="w-full px-3 py-1.5 text-left text-xs text-red-600 dark:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
+                >
+                  <span>🔗</span> Break Transfer Link
                 </button>
               )}
             </div>

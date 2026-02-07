@@ -3,6 +3,20 @@
 **Created:** 2026-01-01  
 **Purpose:** Define a multi-layer testing approach to catch bugs early and reliably.
 
+## Command Matrix
+
+- `npm run test:unit`: unit + component suites (`lib/**/*.test.ts`, `components/**/*.test.tsx`)
+- `npm run test:integration`: API route suites (`app/api/**/*.test.ts`)
+- `npm run test:e2e`: Playwright specs (`e2e/**/*.spec.ts`)
+- `npm run test:coverage`: Vitest coverage run
+
+## Configuration Notes
+
+- Vitest setup file: `tests/setup.ts`
+- Playwright config: `playwright.config.ts`
+- Playwright base URL: `PLAYWRIGHT_BASE_URL` (fallback `NEXT_PUBLIC_BASE_URL`, then `http://localhost:3000`)
+- CI runs lint + unit + integration on push/PR to `main`
+
 ---
 
 ## Testing Pyramid

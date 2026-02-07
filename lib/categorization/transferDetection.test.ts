@@ -6,6 +6,7 @@ import {
   classifyP2PTransaction,
   getSuggestedTransferPairs,
   autoDetectTransfers,
+  detectTransferCandidates,
 } from './transferDetection'
 import type { Transaction } from '@/types/database'
 
@@ -262,6 +263,41 @@ describe('classifyP2PTransaction', () => {
     })
     
     expect(classifyP2PTransaction(tx)).toBe('expense')
+  })
+})
+
+describe('detectTransferCandidates', () => {
+  it('assigns high confidence for provider pattern matches', () => {
+    const tx = createMockTransaction({
+      id: 'provider-1',
+      description_raw: 'AMEX EPAYMENT',
+      amount: -200,
+      account_id: 'acc-1',
+    })
+
+    const candidates = detectTransferCandidates([tx])
+    expect(candidates.length).toBeGreaterThan(0)
+    expect(candidates[0].confidence).toBeGreaterThanOrEqual(0.9)
+  })
+
+  it('handles tolerance edge cases with 1% variance', () => {
+    const a = createMockTransaction({
+      id: 't-a',
+      amount: -100,
+      account_id: 'acc-a',
+      date: '2025-01-05',
+      description_raw: 'Transfer out',
+    })
+    const b = createMockTransaction({
+      id: 't-b',
+      amount: 100.8,
+      account_id: 'acc-b',
+      date: '2025-01-06',
+      description_raw: 'Transfer in',
+    })
+
+    const candidates = detectTransferCandidates([a, b])
+    expect(candidates.some((c) => c.transaction.id === 't-a' || c.transaction.id === 't-b')).toBe(true)
   })
 })
 

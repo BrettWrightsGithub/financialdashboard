@@ -7,6 +7,7 @@ import { OutstandingInflowsCard } from "@/components/dashboard/OutstandingInflow
 import { AlertsCard, type Alert } from "@/components/dashboard/AlertsCard";
 import { CashflowTrendCard } from "@/components/dashboard/CashflowTrendCard";
 import { OverspentCategoriesCard } from "@/components/dashboard/OverspentCategoriesCard";
+import { DailyBriefingCard } from "@/components/dashboard/DailyBriefingCard";
 import { MonthSelector } from "@/components/budget/MonthSelector";
 import { getDashboardData, getExpectedInflows, getCashflowTrend, getOverspentCategories } from "@/lib/queries";
 import { getCurrentMonth, formatCurrency } from "@/lib/cashflow";
@@ -181,6 +182,8 @@ export default function DashboardPage() {
           <OverspentCategoriesCard categories={overspentCategories} />
         </div>
       </div>
+
+      <DailyBriefingCard />
 
       {/* Alerts Section */}
       <AlertsCard alerts={alerts} />

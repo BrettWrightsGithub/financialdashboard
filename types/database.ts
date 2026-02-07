@@ -91,12 +91,15 @@ export interface Transaction {
   counterparty_name: string | null;
   counterparty_id: string | null;
   is_transfer: boolean;
+  transfer_pair_id?: string | null;
+  transfer_match_confidence?: number | null;
+  transfer_match_source?: string | null;
   is_pass_through: boolean;
   is_business: boolean;
   category_source: string | null;
-  parent_transaction_id: string | null;
-  is_split_child: boolean;
-  is_split_parent: boolean;
+  parent_transaction_id?: string | null;
+  is_split_child?: boolean;
+  is_split_parent?: boolean;
   created_at: string;
   updated_at: string;
 }

@@ -80,10 +80,11 @@ Current CI order:
 2. `npm run preflight`
 3. `npm run lint`
 4. `npm run typecheck`
-5. `npm run test:unit`
-6. `npm run test:integration`
-7. `npx playwright install --with-deps chromium`
-8. `npm run test:e2e:smoke`
+5. `npm run build`
+6. `npm run test:unit`
+7. `npm run test:integration`
+8. `npx playwright install --with-deps chromium`
+9. `npm run test:e2e:smoke`
 
 ## License
 

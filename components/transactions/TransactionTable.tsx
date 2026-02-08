@@ -16,7 +16,7 @@ interface TransactionTableProps {
   onTransactionUpdate?: () => void;
 }
 
-type SortField = "date" | "description" | "category" | "account" | "amount";
+type SortField = "date" | "merchant" | "description" | "category" | "account" | "amount";
 type SortDirection = "asc" | "desc";
 
 export function TransactionTable({ transactions, categories, onTransactionUpdate }: TransactionTableProps) {
@@ -76,6 +76,11 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
         case "description":
           cmp = (tA.description_clean || tA.description_raw || "").localeCompare(tB.description_clean || tB.description_raw || "");
           break;
+        case "merchant":
+          cmp = (tA.counterparty_name || tA.description_clean || "").localeCompare(
+            tB.counterparty_name || tB.description_clean || ""
+          );
+          break;
         case "category":
           cmp = (tA.category_name || "").localeCompare(tB.category_name || "");
           break;
@@ -117,6 +122,9 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
               <th className="px-4 py-3 cursor-pointer hover:text-slate-700 dark:hover:text-slate-200" onClick={() => handleSort("description")}>
                 Description<SortIcon field="description" />
               </th>
+              <th className="px-4 py-3 cursor-pointer hover:text-slate-700 dark:hover:text-slate-200" onClick={() => handleSort("merchant")}>
+                Merchant<SortIcon field="merchant" />
+              </th>
               <th className="px-4 py-3 cursor-pointer hover:text-slate-700 dark:hover:text-slate-200" onClick={() => handleSort("category")}>
                 Category<SortIcon field="category" />
               </th>
@@ -133,7 +141,7 @@ export function TransactionTable({ transactions, categories, onTransactionUpdate
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
             {groupedTransactions.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                <td colSpan={8} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
                   No transactions found matching your filters.
                 </td>
               </tr>
@@ -337,13 +345,13 @@ function TransactionRow({
               SPLIT
             </span>
           )}
-          {transaction.description_clean || transaction.description_raw}
+          {transaction.description_raw}
         </div>
-        {transaction.counterparty_name && (
-          <div className="text-xs text-slate-500 dark:text-slate-400">
-            {transaction.counterparty_name}
-          </div>
-        )}
+      </td>
+
+      {/* Merchant */}
+      <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+        {transaction.counterparty_name || transaction.description_clean || "—"}
       </td>
 
       {/* Category (Editable) */}

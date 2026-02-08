@@ -1,4 +1,4 @@
-import type { ParseRuleResult } from "./types";
+import type { AssistantLlmCallDebug, ParseRuleResult } from "./types";
 
 type Provider = "openai" | "anthropic";
 
@@ -6,6 +6,11 @@ interface ProviderInput {
   message: string;
   provider: Provider;
   apiKey: string;
+}
+
+interface ProviderCallResult {
+  parsed: Record<string, unknown> | null;
+  debug: AssistantLlmCallDebug;
 }
 
 const SYSTEM_PROMPT = [
@@ -31,58 +36,160 @@ function safeJsonParse(text: string): Record<string, unknown> | null {
   }
 }
 
-async function callOpenAI(input: ProviderInput): Promise<Record<string, unknown> | null> {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-      temperature: 0,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: input.message },
-      ],
-      response_format: { type: "json_object" },
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenAI request failed: ${response.status}`);
+async function callOpenAI(input: ProviderInput): Promise<ProviderCallResult> {
+  const endpoint = "https://api.openai.com/v1/chat/completions";
+  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const supportsExplicitTemperature = !model.toLowerCase().startsWith("gpt-5");
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: input.message },
+    ],
+    response_format: { type: "json_object" },
+  };
+  if (supportsExplicitTemperature) {
+    requestBody.temperature = 0;
   }
 
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content;
-  if (!content || typeof content !== "string") return null;
-  return safeJsonParse(content);
+  const debugBase: AssistantLlmCallDebug = {
+    provider: "openai",
+    endpoint,
+    model,
+    request: {
+      system_prompt: SYSTEM_PROMPT,
+      user_message: input.message,
+      response_format: "json_object",
+      temperature: supportsExplicitTemperature ? 0 : "default",
+    },
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const payload = await response.json().catch(() => null);
+    const responseDebug = {
+      ...debugBase,
+      status: response.status,
+      response: payload,
+    };
+
+    if (!response.ok) {
+      return {
+        parsed: null,
+        debug: {
+          ...responseDebug,
+          error: `OpenAI request failed: ${response.status}`,
+        },
+      };
+    }
+
+    const content = payload?.choices?.[0]?.message?.content;
+    if (!content || typeof content !== "string") {
+      return {
+        parsed: null,
+        debug: {
+          ...responseDebug,
+          error: "OpenAI response did not include content.",
+        },
+      };
+    }
+
+    return {
+      parsed: safeJsonParse(content),
+      debug: responseDebug,
+    };
+  } catch (error) {
+    return {
+      parsed: null,
+      debug: {
+        ...debugBase,
+        error: error instanceof Error ? error.message : "OpenAI request failed",
+      },
+    };
+  }
 }
 
-async function callAnthropic(input: ProviderInput): Promise<Record<string, unknown> | null> {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": input.apiKey,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-latest",
+async function callAnthropic(input: ProviderInput): Promise<ProviderCallResult> {
+  const endpoint = "https://api.anthropic.com/v1/messages";
+  const model = process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-latest";
+  const requestBody = {
+    model,
+    max_tokens: 300,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: "user", content: input.message }],
+  };
+
+  const debugBase: AssistantLlmCallDebug = {
+    provider: "anthropic",
+    endpoint,
+    model,
+    request: {
+      system_prompt: SYSTEM_PROMPT,
+      user_message: input.message,
       max_tokens: 300,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: input.message }],
-    }),
-  });
+    },
+  };
 
-  if (!response.ok) {
-    throw new Error(`Anthropic request failed: ${response.status}`);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "x-api-key": input.apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const payload = await response.json().catch(() => null);
+    const responseDebug = {
+      ...debugBase,
+      status: response.status,
+      response: payload,
+    };
+
+    if (!response.ok) {
+      return {
+        parsed: null,
+        debug: {
+          ...responseDebug,
+          error: `Anthropic request failed: ${response.status}`,
+        },
+      };
+    }
+
+    const content = payload?.content?.[0]?.text;
+    if (!content || typeof content !== "string") {
+      return {
+        parsed: null,
+        debug: {
+          ...responseDebug,
+          error: "Anthropic response did not include content.",
+        },
+      };
+    }
+
+    return {
+      parsed: safeJsonParse(content),
+      debug: responseDebug,
+    };
+  } catch (error) {
+    return {
+      parsed: null,
+      debug: {
+        ...debugBase,
+        error: error instanceof Error ? error.message : "Anthropic request failed",
+      },
+    };
   }
-
-  const payload = await response.json();
-  const content = payload?.content?.[0]?.text;
-  if (!content || typeof content !== "string") return null;
-  return safeJsonParse(content);
 }
 
 function coerceNumber(value: unknown): number | null {
@@ -130,31 +237,59 @@ export async function parseRuleWithProvider(
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
   let parsed: Record<string, unknown> | null = null;
+  let llmCallDebug: AssistantLlmCallDebug | undefined;
+  let fallbackReason: string | undefined;
 
-  try {
-    if (provider === "openai") {
-      if (!openAiKey) {
-        return {
-          rule: null,
-          response: "LLM provider is set to OpenAI but OPENAI_API_KEY is not configured.",
-        };
-      }
-      parsed = await callOpenAI({ message, provider, apiKey: openAiKey });
-    } else {
-      if (!anthropicKey) {
-        return {
-          rule: null,
-          response: "LLM provider is set to Anthropic but ANTHROPIC_API_KEY is not configured.",
-        };
-      }
-      parsed = await callAnthropic({ message, provider, apiKey: anthropicKey });
+  if (provider === "openai") {
+    if (!openAiKey) {
+      return {
+        rule: null,
+        response: "LLM provider is set to OpenAI but OPENAI_API_KEY is not configured.",
+        debug: {
+          llm_call: {
+            provider: "openai",
+            endpoint: "https://api.openai.com/v1/chat/completions",
+            model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+            request: {
+              system_prompt: SYSTEM_PROMPT,
+              user_message: message,
+            },
+            error: "OPENAI_API_KEY is not configured",
+          },
+        },
+      };
     }
-  } catch {
-    parsed = null;
+    const llmResult = await callOpenAI({ message, provider, apiKey: openAiKey });
+    parsed = llmResult.parsed;
+    llmCallDebug = llmResult.debug;
+  } else {
+    if (!anthropicKey) {
+      return {
+        rule: null,
+        response: "LLM provider is set to Anthropic but ANTHROPIC_API_KEY is not configured.",
+        debug: {
+          llm_call: {
+            provider: "anthropic",
+            endpoint: "https://api.anthropic.com/v1/messages",
+            model: process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-latest",
+            request: {
+              system_prompt: SYSTEM_PROMPT,
+              user_message: message,
+            },
+            error: "ANTHROPIC_API_KEY is not configured",
+          },
+        },
+      };
+    }
+    const llmResult = await callAnthropic({ message, provider, apiKey: anthropicKey });
+    parsed = llmResult.parsed;
+    llmCallDebug = llmResult.debug;
   }
 
+  const usedRegexFallback = !parsed;
   if (!parsed) {
     parsed = regexFallback(message);
+    fallbackReason = llmCallDebug?.error || "Model returned empty or unparsable JSON.";
   }
 
   const merchant = typeof parsed.merchant === "string" ? parsed.merchant.trim() : null;
@@ -171,6 +306,12 @@ export async function parseRuleWithProvider(
       clarification:
         clarification ||
         "I need both a merchant pattern and a destination category. Example: 'Categorize Starbucks under $15 as Coffee'.",
+      debug: {
+        llm_call: llmCallDebug,
+        used_regex_fallback: usedRegexFallback,
+        fallback_reason: fallbackReason,
+        parsed_payload: parsed,
+      },
     };
   }
 
@@ -189,6 +330,12 @@ export async function parseRuleWithProvider(
       assign_category_id: null,
       assign_is_transfer: parsed.transfer === true ? true : null,
       assign_is_pass_through: null,
+    },
+    debug: {
+      llm_call: llmCallDebug,
+      used_regex_fallback: usedRegexFallback,
+      fallback_reason: fallbackReason,
+      parsed_payload: parsed,
     },
   };
 }

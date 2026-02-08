@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { formatCurrencyPrecise } from "@/lib/cashflow";
 import type { Category, TransactionWithDetails, SplitInput } from "@/types/database";
 import { GroupedCategorySelect } from "./GroupedCategorySelect";
+import type { AssistantAction, AssistantChatDebugInfo, AssistantChatResult } from "@/lib/assistant/types";
 
 interface SplitModalProps {
   transaction: TransactionWithDetails;
@@ -30,6 +31,16 @@ export function SplitModal({
   const [splits, setSplits] = useState<SplitRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugEntries, setDebugEntries] = useState<Array<{
+    id: string;
+    request: unknown;
+    response: unknown;
+    debug: AssistantChatDebugInfo | undefined;
+  }>>([]);
 
   const parentAmount = Math.abs(transaction.amount);
 
@@ -129,6 +140,67 @@ export function SplitModal({
     }
   };
 
+  const suggestSplits = async () => {
+    const prompt = assistantPrompt.trim();
+    if (!prompt || assistantLoading) return;
+
+    setAssistantLoading(true);
+    setAssistantMessage(null);
+
+    try {
+      const response = await fetch("/api/assistant/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionHint: "propose_split",
+          messages: [{ role: "user", content: prompt }],
+          selectedTransaction: transaction,
+          debug: debugEnabled,
+        }),
+      });
+      const payload = (await response.json()) as AssistantChatResult & { error?: string };
+      setAssistantMessage(payload.assistant_message || payload.error || "No split suggestion returned.");
+      if (debugEnabled) {
+        setDebugEntries((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            request: {
+              actionHint: "propose_split",
+              messages: [{ role: "user", content: prompt }],
+              selectedTransaction: transaction,
+              debug: true,
+            },
+            response: payload,
+            debug: payload.debug,
+          },
+        ]);
+      }
+
+      if (payload.action?.type === "propose_split") {
+        const action = payload.action as AssistantAction<"propose_split">;
+        const nextRows = action.preview.lines.map((line) => ({
+          id: crypto.randomUUID(),
+          amount: line.amount.toFixed(2),
+          category_id: line.category_id || "",
+          description: line.description || "",
+        }));
+        if (nextRows.length >= 2) {
+          setSplits(nextRows);
+        }
+        if (action.preview.validation_error) {
+          setError(action.preview.validation_error);
+        } else {
+          setError(null);
+        }
+      }
+    } catch {
+      setAssistantMessage("Failed to generate split suggestions.");
+    } finally {
+      setAssistantLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -158,6 +230,60 @@ export function SplitModal({
 
         {/* Split Rows */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          <div className="rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/60 dark:bg-blue-900/10 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-semibold text-blue-900 dark:text-blue-200">Suggest Splits</div>
+              <button
+                type="button"
+                className={`text-xs px-2 py-1 rounded-md border ${
+                  debugEnabled
+                    ? "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20"
+                    : "border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300"
+                }`}
+                onClick={() => setDebugEnabled((prev) => !prev)}
+              >
+                Debug {debugEnabled ? "On" : "Off"}
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <textarea
+                value={assistantPrompt}
+                onChange={(event) => setAssistantPrompt(event.target.value)}
+                placeholder="Paste receipt lines, e.g. 'Groceries 42.10, Household 11.90'"
+                className="w-full rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 px-3 py-2 text-xs min-h-[88px]"
+              />
+              <button
+                type="button"
+                onClick={suggestSplits}
+                disabled={assistantLoading || !assistantPrompt.trim()}
+                className="btn-primary text-xs h-fit min-h-[44px]"
+              >
+                {assistantLoading ? "Parsing..." : "Suggest"}
+              </button>
+            </div>
+            {assistantMessage && (
+              <div className="text-xs text-blue-700 dark:text-blue-300">{assistantMessage}</div>
+            )}
+            {debugEnabled && (
+              <div className="rounded border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/10 p-2 space-y-2">
+                <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">Debug trace (latest first)</div>
+                {debugEntries.length === 0 && (
+                  <div className="text-xs text-amber-700 dark:text-amber-400">Run Suggest to capture request/response.</div>
+                )}
+                {debugEntries.slice(-2).reverse().map((entry) => (
+                  <details key={entry.id}>
+                    <summary className="text-[11px] cursor-pointer text-amber-700 dark:text-amber-300">
+                      Prompt: {entry.debug?.contextual_prompt || "N/A"}
+                    </summary>
+                    <pre className="mt-1 max-h-40 overflow-auto text-[10px] whitespace-pre-wrap break-all">
+                      {JSON.stringify({ request: entry.request, response: entry.response, debug: entry.debug }, null, 2)}
+                    </pre>
+                  </details>
+                ))}
+              </div>
+            )}
+          </div>
+
           {splits.map((split, index) => (
             <div
               key={split.id}

@@ -5,6 +5,7 @@ import type { Category } from "@/types/database";
 import type { TransactionWithDetails } from "@/types/database";
 import type { GlobalFilterState } from "./GlobalFilters";
 import { GroupedCategorySelect } from "./GroupedCategorySelect";
+import type { AssistantAction, AssistantChatDebugInfo, AssistantChatResult } from "@/lib/assistant/types";
 
 interface ReviewQueueProps {
   filters: GlobalFilterState;
@@ -64,6 +65,17 @@ export function ReviewQueue({
   const [pendingCategoryId, setPendingCategoryId] = useState("");
   const [saving, setSaving] = useState(false);
   const [showProcessed, setShowProcessed] = useState(false);
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
+  const [bulkActionPreview, setBulkActionPreview] = useState<AssistantAction<"bulk_edit_transactions"> | null>(null);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugEntries, setDebugEntries] = useState<Array<{
+    id: string;
+    request: unknown;
+    response: unknown;
+    debug: AssistantChatDebugInfo | undefined;
+  }>>([]);
 
   useEffect(() => {
     const load = async () => {
@@ -169,6 +181,76 @@ export function ReviewQueue({
     setSaving(false);
   };
 
+  const generateCommandPreview = async () => {
+    const prompt = assistantPrompt.trim();
+    if (!prompt || assistantLoading) return;
+
+    setAssistantLoading(true);
+    setAssistantMessage(null);
+    setBulkActionPreview(null);
+
+    try {
+      const response = await fetch("/api/assistant/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionHint: "bulk_edit_transactions",
+          messages: [{ role: "user", content: prompt }],
+          selectedTransactionIds: Array.from(selectedIds),
+          debug: debugEnabled,
+        }),
+      });
+      const payload = (await response.json()) as AssistantChatResult & { error?: string };
+      setAssistantMessage(payload.assistant_message || payload.error || "No preview generated.");
+      if (payload.action?.type === "bulk_edit_transactions") {
+        setBulkActionPreview(payload.action as AssistantAction<"bulk_edit_transactions">);
+      }
+      if (debugEnabled) {
+        setDebugEntries((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            request: {
+              actionHint: "bulk_edit_transactions",
+              messages: [{ role: "user", content: prompt }],
+              selectedTransactionIds: Array.from(selectedIds),
+              debug: true,
+            },
+            response: payload,
+            debug: payload.debug,
+          },
+        ]);
+      }
+    } catch {
+      setAssistantMessage("Failed to generate command preview.");
+    } finally {
+      setAssistantLoading(false);
+    }
+  };
+
+  const applyBulkActionPreview = async () => {
+    if (!bulkActionPreview) return;
+    setSaving(true);
+    setAssistantMessage(null);
+
+    try {
+      await fetch("/api/transactions/bulk-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bulkActionPreview.preview.payload),
+      });
+      setProcessedIds((prev) => new Set([...prev, ...bulkActionPreview.preview.transaction_ids]));
+      onSelectedIdsChange(new Set());
+      setAssistantPrompt("");
+      setBulkActionPreview(null);
+      setAssistantMessage("Bulk command applied.");
+    } catch {
+      setAssistantMessage("Failed to apply bulk command.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <section className="card">
       <div className="w-full px-4 py-4 border-b border-slate-200 dark:border-slate-700 space-y-3">
@@ -210,6 +292,73 @@ export function ReviewQueue({
             {saving ? "Saving..." : "Confirm Selected"}
           </button>
         </div>
+
+        <div className="rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/60 dark:bg-blue-900/10 p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-blue-900 dark:text-blue-200">Bulk Command Assistant</div>
+            <button
+              type="button"
+              className={`text-xs px-2 py-1 rounded-md border ${
+                debugEnabled
+                  ? "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20"
+                  : "border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300"
+              }`}
+              onClick={() => setDebugEnabled((prev) => !prev)}
+            >
+              Debug {debugEnabled ? "On" : "Off"}
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={assistantPrompt}
+              onChange={(event) => setAssistantPrompt(event.target.value)}
+              placeholder="e.g., Mark selected as Groceries and learn payee"
+              className="flex-1 rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 px-3 py-2 text-xs min-h-[44px]"
+            />
+            <button
+              type="button"
+              onClick={generateCommandPreview}
+              disabled={assistantLoading || !assistantPrompt.trim() || selectedIds.size === 0}
+              className="btn-primary text-xs min-h-[44px]"
+            >
+              {assistantLoading ? "Parsing..." : "Preview"}
+            </button>
+          </div>
+          {assistantMessage && (
+            <div className="text-xs text-blue-700 dark:text-blue-300">{assistantMessage}</div>
+          )}
+          {bulkActionPreview && (
+            <div className="rounded border border-blue-200 dark:border-blue-800 bg-white/70 dark:bg-slate-900/40 p-2 space-y-2">
+              <div className="text-xs text-slate-700 dark:text-slate-300">{bulkActionPreview.preview.summary}</div>
+              <button
+                type="button"
+                onClick={applyBulkActionPreview}
+                disabled={saving}
+                className="btn-primary text-xs min-h-[44px]"
+              >
+                {saving ? "Applying..." : "Confirm Assistant Command"}
+              </button>
+            </div>
+          )}
+          {debugEnabled && (
+            <div className="rounded border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/10 p-2 space-y-2">
+              <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">Debug trace (latest first)</div>
+              {debugEntries.length === 0 && (
+                <div className="text-xs text-amber-700 dark:text-amber-400">Run Preview to capture request/response.</div>
+              )}
+              {debugEntries.slice(-2).reverse().map((entry) => (
+                <details key={entry.id}>
+                  <summary className="text-[11px] cursor-pointer text-amber-700 dark:text-amber-300">
+                    Prompt: {entry.debug?.contextual_prompt || "N/A"}
+                  </summary>
+                  <pre className="mt-1 max-h-40 overflow-auto text-[10px] whitespace-pre-wrap break-all">
+                    {JSON.stringify({ request: entry.request, response: entry.response, debug: entry.debug }, null, 2)}
+                  </pre>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {expanded && (
@@ -218,6 +367,26 @@ export function ReviewQueue({
 
           {!loading && filteredTransactions.length === 0 && (
             <div className="text-sm text-slate-500">No items need review.</div>
+          )}
+
+          {!loading && processedTransactions.length > 0 && showProcessed && (
+            <div className="pb-2 border-b border-slate-200 dark:border-slate-700 space-y-2">
+              {processedTransactions.map((transaction) => (
+                <div
+                  key={`processed-${transaction.id}`}
+                  className="border border-slate-300 dark:border-slate-700 opacity-60 bg-slate-100/60 dark:bg-slate-800/30 rounded-lg p-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">{transaction.description_clean || transaction.description_raw}</div>
+                      <div className="text-xs text-slate-500">{transaction.account_name} • {transaction.date}</div>
+                    </div>
+                    <div className="text-sm font-semibold">{transaction.amount.toFixed(2)}</div>
+                  </div>
+                  <div className="mt-2 text-xs text-green-700 dark:text-green-300">Saved ✓</div>
+                </div>
+              ))}
+            </div>
           )}
 
           {!loading && activeTransactions.map((transaction) => (
@@ -263,26 +432,6 @@ export function ReviewQueue({
               </div>
             </div>
           ))}
-
-          {!loading && processedTransactions.length > 0 && showProcessed && (
-            <div className="pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-              {processedTransactions.map((transaction) => (
-                <div
-                  key={`processed-${transaction.id}`}
-                  className="border border-slate-300 dark:border-slate-700 opacity-60 bg-slate-100/60 dark:bg-slate-800/30 rounded-lg p-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-medium">{transaction.description_clean || transaction.description_raw}</div>
-                      <div className="text-xs text-slate-500">{transaction.account_name} • {transaction.date}</div>
-                    </div>
-                    <div className="text-sm font-semibold">{transaction.amount.toFixed(2)}</div>
-                  </div>
-                  <div className="mt-2 text-xs text-green-700 dark:text-green-300">Saved ✓</div>
-                </div>
-              ))}
-            </div>
-          )}
 
           {!loading && activeFilteredTransactions.length > 10 && (
             <div className="flex items-center gap-2">

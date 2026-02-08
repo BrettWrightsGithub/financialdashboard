@@ -1,5 +1,6 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
+._*
+.__*
 # dependencies
 /node_modules
 /.pnp
@@ -42,12 +43,14 @@ docker/n8n/.n8n/
 teller/certs/
 
 # IDE and AI assistant configs
-.windsurf/
 .gemini/
-.windsurfrules
+
 
 # Dev artifacts at root
 teller-enrollment.html
+
+# Test run artifacts
+test-results/
 validation_query.sql
 create-icons.html
 test-setup.ts

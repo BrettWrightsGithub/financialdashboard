@@ -62,6 +62,19 @@ interface ExternalOrderItemRow {
   line_total: number;
 }
 
+interface CsvImportBatchRow {
+  id: string;
+  artifact_id: string;
+  status: string;
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  duplicate_rows: number;
+  applied_rows: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -111,6 +124,7 @@ export async function GET(request: NextRequest) {
     let lineItemRows: IntakeLineItemRow[] = [];
     let externalOrderRows: ExternalOrderRow[] = [];
     let externalOrderItemRows: ExternalOrderItemRow[] = [];
+    let csvBatchRows: CsvImportBatchRow[] = [];
 
     if (artifactIds.length > 0) {
       const { data: extractions, error: extractionError } = await supabase
@@ -163,6 +177,17 @@ export async function GET(request: NextRequest) {
 
         externalOrderItemRows = (externalOrderItems || []) as ExternalOrderItemRow[];
       }
+
+      const { data: csvBatches, error: csvBatchError } = await supabase
+        .from("csv_import_batches")
+        .select("id, artifact_id, status, total_rows, valid_rows, invalid_rows, duplicate_rows, applied_rows, created_at, updated_at")
+        .in("artifact_id", artifactIds);
+
+      if (csvBatchError) {
+        return NextResponse.json({ error: csvBatchError.message }, { status: 500 });
+      }
+
+      csvBatchRows = (csvBatches || []) as CsvImportBatchRow[];
     }
 
     const lineItemsByExtraction = new Map<string, IntakeLineItemRow[]>();
@@ -189,9 +214,15 @@ export async function GET(request: NextRequest) {
       externalItemsByOrder.set(row.external_order_id, current);
     }
 
+    const csvBatchByArtifact = new Map<string, CsvImportBatchRow>();
+    for (const csvBatch of csvBatchRows) {
+      csvBatchByArtifact.set(csvBatch.artifact_id, csvBatch);
+    }
+
     const queue = artifactRows.map((artifact) => {
       const extraction = extractionByArtifact.get(artifact.id) || null;
       const externalOrder = externalOrderByArtifact.get(artifact.id) || null;
+      const csvBatch = csvBatchByArtifact.get(artifact.id) || null;
 
       return {
         artifact,
@@ -207,6 +238,7 @@ export async function GET(request: NextRequest) {
               items: externalItemsByOrder.get(externalOrder.id) || [],
             }
           : null,
+        csv_batch: csvBatch,
       };
     });
 

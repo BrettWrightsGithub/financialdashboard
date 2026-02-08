@@ -1,12 +1,16 @@
 # Testing Strategy
 
 **Created:** 2026-01-01  
+**Updated:** 2026-02-08  
 **Purpose:** Define a multi-layer testing approach to catch bugs early and reliably.
 
 ## Command Matrix
 
+- `npm run preflight`: Parse local/parent `package.json` + fail on merge conflict markers
+- `npm run typecheck`: TypeScript compile checks (`tsc --noEmit`)
 - `npm run test:unit`: unit + component suites (`lib/**/*.test.ts`, `components/**/*.test.tsx`)
 - `npm run test:integration`: API route suites (`app/api/**/*.test.ts`)
+- `npm run test:e2e:smoke`: smoke e2e (`e2e/transactions-review-queue.smoke.spec.ts`, Chromium only)
 - `npm run test:e2e`: Playwright specs (`e2e/**/*.spec.ts`)
 - `npm run test:coverage`: Vitest coverage run
 
@@ -15,7 +19,16 @@
 - Vitest setup file: `tests/setup.ts`
 - Playwright config: `playwright.config.ts`
 - Playwright base URL: `PLAYWRIGHT_BASE_URL` (fallback `NEXT_PUBLIC_BASE_URL`, then `http://localhost:3000`)
-- CI runs lint + unit + integration on push/PR to `main`
+- CI workflow: `.github/workflows/ci.yml`
+- CI runs on push/PR to `main` in this order:
+  1. `npm ci`
+  2. `npm run preflight`
+  3. `npm run lint`
+  4. `npm run typecheck`
+  5. `npm run test:unit`
+  6. `npm run test:integration`
+  7. `npx playwright install --with-deps chromium`
+  8. `npm run test:e2e:smoke`
 
 ---
 
@@ -366,11 +379,15 @@ Each workflow should specify which test types are required:
 ```json
 // package.json scripts
 {
-  "test": "vitest",
-  "test:ui": "vitest --ui",
-  "test:coverage": "vitest --coverage",
+  "preflight": "node scripts/preflight.mjs",
+  "typecheck": "tsc --noEmit",
+  "test": "npm run test:unit",
+  "test:unit": "vitest run \"lib/**/*.test.ts\" \"components/**/*.test.tsx\"",
+  "test:integration": "vitest run \"app/api/**/*.test.ts\"",
+  "test:e2e:smoke": "playwright test e2e/transactions-review-queue.smoke.spec.ts --project=chromium",
   "test:e2e": "playwright test",
-  "test:e2e:ui": "playwright test --ui"
+  "test:coverage": "vitest run --coverage",
+  "test:watch": "vitest"
 }
 ```
 

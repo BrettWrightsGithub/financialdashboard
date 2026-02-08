@@ -36,13 +36,14 @@ Then open http://localhost:3000
 - **Frontend:** Next.js 15 + React + TypeScript
 - **Data:** Supabase (PostgreSQL)
 - **Styling:** TailwindCSS
-- **Testing:** Vitest + Jest
+- **Testing:** Vitest + Playwright
 
 ## Documentation
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — Full deployment and setup guide
 - [docs/db-schema.md](docs/db-schema.md) — Database schema reference
 - [docs/financial-command-center-overview.md](docs/financial-command-center-overview.md) — System architecture
+- [docs/testing/testing_strategy.md](docs/testing/testing_strategy.md) — Test strategy and CI gate
 
 ## Development
 
@@ -53,12 +54,36 @@ npm install
 # Run dev server
 npm run dev
 
-# Run tests
-npm test
+# Preflight checks (JSON validity + merge marker scan)
+npm run preflight
 
-# Run linter
+# Static checks
 npm run lint
+npm run typecheck
+
+# Test suites
+npm run test:unit
+npm run test:integration
+npm run test:e2e:smoke
+npm run test:e2e
+
+# Shortcut for unit tests
+npm test
 ```
+
+## CI Test Gate
+
+GitHub Actions runs on push/PR to `main` via `.github/workflows/ci.yml`.
+
+Current CI order:
+1. `npm ci`
+2. `npm run preflight`
+3. `npm run lint`
+4. `npm run typecheck`
+5. `npm run test:unit`
+6. `npm run test:integration`
+7. `npx playwright install --with-deps chromium`
+8. `npm run test:e2e:smoke`
 
 ## License
 

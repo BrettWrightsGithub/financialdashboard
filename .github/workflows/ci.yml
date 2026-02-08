@@ -14,6 +14,13 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
+      - run: npm run preflight
       - run: npm run lint
+      - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:integration
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:smoke
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { RuleForm, emptyFormData, type RuleFormData } from "@/components/admin/RuleForm";
 import type { CategorizationRuleWithCategory, Category } from "@/types/database";
 
@@ -22,6 +23,8 @@ interface PreviewResult {
 }
 
 export default function RulesAdminPage() {
+  const searchParams = useSearchParams();
+  const highlightedRuleId = searchParams.get("highlight");
   const [rules, setRules] = useState<CategorizationRuleWithCategory[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -344,7 +347,9 @@ export default function RulesAdminPage() {
             <div
               key={rule.id}
               className={`p-4 bg-white dark:bg-slate-800 rounded-lg border ${
-                rule.is_active
+                highlightedRuleId === rule.id
+                  ? "border-green-400 ring-2 ring-green-200 dark:ring-green-900/40"
+                  : rule.is_active
                   ? "border-slate-200 dark:border-slate-700"
                   : "border-slate-200 dark:border-slate-700 opacity-60"
               }`}

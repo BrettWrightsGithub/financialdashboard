@@ -1,7 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
-import type { ParsedRulePayload } from "@/lib/assistant/types";
+import type {
+  AssistantChatMessage,
+  AssistantChatResult,
+  ParsedRulePayload,
+} from "@/lib/assistant/types";
 import { RulePreviewCard } from "./RulePreviewCard";
 import type { TransactionWithDetails } from "@/types/database";
 
@@ -9,75 +14,120 @@ interface ChatAssistantProps {
   selectedTransaction?: TransactionWithDetails | null;
 }
 
-interface AssistantResponse {
-  rule?: ParsedRulePayload;
-  clarification?: string;
-  response?: string;
+interface AssistantMessage extends AssistantChatMessage {
+  id: string;
+}
+
+interface AssistantResponse extends Partial<AssistantChatResult> {
   error?: string;
 }
+
+function createMessage(role: "assistant" | "user", content: string): AssistantMessage {
+  return {
+    id: `${Date.now()}-${Math.random()}`,
+    role,
+    content,
+  };
+}
+
+const INITIAL_MESSAGE = createMessage("assistant", "How can I help?");
 
 export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [messages, setMessages] = useState<AssistantMessage[]>([INITIAL_MESSAGE]);
   const [previewRule, setPreviewRule] = useState<ParsedRulePayload | null>(null);
-  const [message, setMessage] = useState<string>("");
+  const [createdRule, setCreatedRule] = useState<{ id: string; name: string } | null>(null);
 
   const contextHint = useMemo(() => {
     if (!selectedTransaction) return "No transaction selected.";
     return `Selected: ${selectedTransaction.description_clean || selectedTransaction.description_raw} (${selectedTransaction.amount})`;
   }, [selectedTransaction]);
 
-  const send = async () => {
-    if (!input.trim() || loading) return;
-    setLoading(true);
-    setPreviewRule(null);
-    setMessage("");
+  const confirmRule = async () => {
+    if (!previewRule?.assign_category_id) return;
+    setConfirming(true);
 
     try {
-      const response = await fetch("/api/assistant/parse-rule", {
+      const response = await fetch("/api/categorization/rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: input, selectedTransaction }),
+        body: JSON.stringify(previewRule),
+      });
+
+      if (response.ok) {
+        const payload = await response.json();
+        setCreatedRule({
+          id: payload.rule?.id || "",
+          name: payload.rule?.name || previewRule.name,
+        });
+        setPreviewRule(null);
+        setMessages((prev) => [
+          ...prev,
+          createMessage("assistant", "Looks good. I added that rule."),
+        ]);
+      } else {
+        const payload = await response.json();
+        setMessages((prev) => [
+          ...prev,
+          createMessage("assistant", payload.error || "Failed to save rule."),
+        ]);
+      }
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        createMessage("assistant", "Failed to save rule."),
+      ]);
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const send = async () => {
+    if (!input.trim() || loading || confirming) return;
+
+    const userMessage = createMessage("user", input.trim());
+    const nextMessages = [...messages, userMessage];
+    setMessages(nextMessages);
+    setInput("");
+    setLoading(true);
+    setCreatedRule(null);
+
+    try {
+      const response = await fetch("/api/assistant/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: nextMessages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+          selectedTransaction,
+          draftRule: previewRule,
+        }),
       });
 
       const payload: AssistantResponse = await response.json();
-      if (payload.rule) {
-        setPreviewRule(payload.rule);
-        setMessage("Review the rule and confirm to save.");
-      } else {
-        setMessage(payload.clarification || payload.response || payload.error || "Could not parse request.");
-      }
+      const text = payload.assistant_message || payload.error || "I couldn't process that. Please try again.";
+      setMessages((prev) => [...prev, createMessage("assistant", text)]);
+      setPreviewRule(payload.rule || null);
     } catch {
-      setMessage("Failed to reach assistant parser.");
+      setMessages((prev) => [
+        ...prev,
+        createMessage("assistant", "I couldn't reach the assistant service."),
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
-  const confirm = async () => {
-    if (!previewRule?.assign_category_id) return;
-    setLoading(true);
-    try {
-      const response = await fetch("/api/categorization/rules", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...previewRule,
-          assign_category_id: previewRule.assign_category_id,
-        }),
-      });
-
-      if (response.ok) {
-        setMessage("Rule saved.");
-        setPreviewRule(null);
-      } else {
-        const payload = await response.json();
-        setMessage(payload.error || "Failed to save rule.");
-      }
-    } finally {
-      setLoading(false);
-    }
+  const startNewChat = () => {
+    setMessages([INITIAL_MESSAGE]);
+    setPreviewRule(null);
+    setCreatedRule(null);
+    setInput("");
   };
 
   return (
@@ -98,49 +148,78 @@ export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
           </div>
 
           <div className="p-4 space-y-3">
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder='Example: Categorize Starbucks under $15 as Coffee'
-              className="w-full min-h-[96px] rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent px-3 py-2 text-sm"
-            />
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={send}
-                disabled={loading}
-                className="btn-primary text-sm min-h-[44px]"
-              >
-                {loading ? "Parsing..." : "Parse"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPreviewRule(null);
-                  setMessage("Cancelled.");
-                }}
-                className="btn-secondary text-sm min-h-[44px]"
-              >
-                Cancel
-              </button>
+            <div className="max-h-[320px] overflow-y-auto space-y-2 pr-1">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`rounded-lg px-3 py-2 text-sm ${
+                    message.role === "assistant"
+                      ? "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                      : "bg-blue-600 text-white ml-8"
+                  }`}
+                >
+                  {message.content}
+                </div>
+              ))}
             </div>
 
-            {message && <div className="text-xs text-slate-600 dark:text-slate-300">{message}</div>}
-
             {previewRule && (
-              <div className="space-y-2">
+              <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
                 <RulePreviewCard rule={previewRule} />
+                {!previewRule.assign_category_id && (
+                  <div className="text-xs text-amber-600 dark:text-amber-400">
+                    Category needs clarification before confirming.
+                  </div>
+                )}
                 <button
                   type="button"
-                  className="btn-primary text-sm min-h-[44px]"
-                  onClick={confirm}
-                  disabled={loading || !previewRule.assign_category_id}
+                  className="btn-primary text-sm min-h-[44px] w-full"
+                  onClick={confirmRule}
+                  disabled={loading || confirming || !previewRule.assign_category_id}
                 >
-                  Confirm Save
+                  {confirming ? "Saving..." : "Confirm"}
                 </button>
               </div>
             )}
+
+            {createdRule && (
+              <div className="rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/20 dark:border-emerald-800 p-3 text-xs text-emerald-800 dark:text-emerald-200">
+                <div className="font-medium">✓ Rule added.</div>
+                <Link className="underline" href={`/admin/rules?highlight=${createdRule.id}`}>
+                  Check it out here
+                </Link>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    send();
+                  }
+                }}
+                placeholder="Describe what rule you want to create..."
+                className="flex-1 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent px-3 py-2 text-sm min-h-[44px]"
+              />
+              <button
+                type="button"
+                onClick={send}
+                disabled={loading || confirming || !input.trim()}
+                className="btn-primary text-sm min-h-[44px]"
+              >
+                {loading ? "..." : "Send"}
+              </button>
+              <button
+                type="button"
+                onClick={startNewChat}
+                className="btn-secondary text-sm min-h-[44px]"
+              >
+                New
+              </button>
+            </div>
           </div>
         </div>
       )}

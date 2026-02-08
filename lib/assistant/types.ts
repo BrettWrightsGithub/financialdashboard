@@ -19,3 +19,17 @@ export interface ParseRuleResult {
   clarification?: string;
   response?: string;
 }
+
+export interface AssistantChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export type AssistantChatStatus = "ask_details" | "show_review";
+
+export interface AssistantChatResult {
+  status: AssistantChatStatus;
+  assistant_message: string;
+  rule: ParsedRulePayload | null;
+  clarification?: string;
+}

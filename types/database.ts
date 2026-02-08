@@ -297,3 +297,108 @@ export interface CategorizationStats {
 
 // Category source types
 export type CategorySource = "manual" | "rule" | "payee_memory" | "plaid" | "override";
+
+// Intake source types
+export type IntakeSourceType = "upload" | "csv" | "amazon_extension";
+
+export type IntakeArtifactStatus =
+  | "received"
+  | "parsed"
+  | "matched"
+  | "needs_review"
+  | "ready_to_apply"
+  | "applied"
+  | "error";
+
+export type IntakeMatchStatus = "unmatched" | "suggested" | "confirmed" | "rejected" | "applied";
+
+// Shared intake artifact
+export interface IntakeArtifact {
+  id: string;
+  source_type: IntakeSourceType;
+  marketplace: string | null;
+  provider_order_id: string | null;
+  storage_path: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  status: IntakeArtifactStatus;
+  error_message: string | null;
+  raw_payload_json: Record<string, unknown> | null;
+  received_at: string;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Shared intake extraction row
+export interface IntakeExtraction {
+  id: string;
+  artifact_id: string;
+  merchant_name: string | null;
+  transaction_date: string | null;
+  currency: string | null;
+  total_amount: number | null;
+  tax_amount: number | null;
+  shipping_amount: number | null;
+  raw_extraction_json: Record<string, unknown> | null;
+  extraction_confidence: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Shared intake itemized row
+export interface IntakeLineItem {
+  id: string;
+  extraction_id: string;
+  line_index: number;
+  description: string;
+  quantity: number;
+  unit_price: number | null;
+  line_total: number;
+  suggested_category_id: string | null;
+  confirmed_category_id: string | null;
+  raw_item_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Shared intake match row
+export interface IntakeMatch {
+  id: string;
+  extraction_id: string;
+  transaction_id: string | null;
+  match_confidence: number | null;
+  match_reason: string | null;
+  status: IntakeMatchStatus;
+  applied_batch_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Amazon source order metadata
+export interface ExternalOrder {
+  id: string;
+  intake_artifact_id: string;
+  marketplace: string;
+  provider_order_id: string;
+  order_date: string;
+  order_total: number;
+  currency: string;
+  raw_payload_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Amazon source order item metadata
+export interface ExternalOrderItem {
+  id: string;
+  external_order_id: string;
+  line_index: number;
+  item_title: string;
+  quantity: number;
+  unit_price: number | null;
+  line_total: number;
+  raw_item_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}

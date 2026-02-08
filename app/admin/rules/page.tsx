@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { RuleForm, emptyFormData, type RuleFormData } from "@/components/admin/RuleForm";
+import { ChatAssistant } from "@/components/assistant/ChatAssistant";
 import type { CategorizationRuleWithCategory, Category } from "@/types/database";
 
 interface PreviewResult {
@@ -42,6 +43,29 @@ export default function RulesAdminPage() {
   const [applyingRule, setApplyingRule] = useState<string | null>(null);
   const [lastBatchByRule, setLastBatchByRule] = useState<Record<string, string>>({});
   const [undoingBatch, setUndoingBatch] = useState<string | null>(null);
+
+  const loadPreview = useCallback(async (ruleId: string) => {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 90);
+
+    const res = await fetch("/api/rules/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rule_id: ruleId,
+        date_range: {
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+        },
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || "Preview failed");
+    }
+    return data as PreviewResult;
+  }, []);
 
   const fetchRules = useCallback(async () => {
     try {
@@ -174,7 +198,7 @@ export default function RulesAdminPage() {
   };
 
   // Dry run preview with guardrails
-  const handlePreview = async (ruleId: string) => {
+  const handlePreview = useCallback(async (ruleId: string) => {
     // Close any existing preview first
     if (previewingRule === ruleId) {
       setPreviewingRule(null);
@@ -188,32 +212,14 @@ export default function RulesAdminPage() {
     setPreviewResult(null);
 
     try {
-      // Use last 90 days as default range for safety
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 90);
-
-      const res = await fetch("/api/rules/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rule_id: ruleId,
-          date_range: {
-            start: startDate.toISOString(),
-            end: endDate.toISOString(),
-          },
-        }),
-      });
-
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await loadPreview(ruleId);
       setPreviewResult(data);
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : "Preview failed");
     } finally {
       setPreviewLoading(false);
     }
-  };
+  }, [loadPreview, previewingRule]);
 
   const handleApplyPreview = async (ruleId: string) => {
     if (!previewResult || previewResult.matchingTransactions.length === 0) return;
@@ -245,6 +251,10 @@ export default function RulesAdminPage() {
       }
 
       setLastBatchByRule((prev) => ({ ...prev, [ruleId]: data.batch_id }));
+      if (previewingRule === ruleId) {
+        const refreshed = await loadPreview(ruleId);
+        setPreviewResult(refreshed);
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to apply backfill");
     } finally {
@@ -585,6 +595,16 @@ export default function RulesAdminPage() {
           ))
         )}
       </div>
+
+      <ChatAssistant
+        title="Rules Copilot"
+        placeholder="Describe a rule to create..."
+        quickPrompts={[
+          "Create a Netflix outflow rule for Entertainment",
+          "Categorize Starbucks under $20 as Coffee",
+          "Mark transfers from Venmo as Transfer",
+        ]}
+      />
     </div>
   );
 }

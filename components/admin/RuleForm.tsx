@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Category } from "@/types/database";
+import type { AssistantChatDebugInfo, AssistantChatResult, ParsedRulePayload } from "@/lib/assistant/types";
 
 // Info tooltips for each field
 const FIELD_INFO: Record<string, string> = {
@@ -90,12 +91,143 @@ export function RuleForm({
   saving,
   isEditing,
 }: RuleFormProps) {
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugEntries, setDebugEntries] = useState<Array<{
+    id: string;
+    request: unknown;
+    response: unknown;
+    debug: AssistantChatDebugInfo | undefined;
+  }>>([]);
+
   const updateField = <K extends keyof RuleFormData>(field: K, value: RuleFormData[K]) => {
     setFormData({ ...formData, [field]: value });
   };
 
+  const applyRuleToForm = (rule: ParsedRulePayload) => {
+    setFormData({
+      name: rule.name || formData.name,
+      description: rule.description || "",
+      priority: rule.priority ?? 50,
+      is_active: rule.is_active ?? true,
+      match_merchant_contains: rule.match_merchant_contains || "",
+      match_merchant_exact: rule.match_merchant_exact || "",
+      match_amount_min: rule.match_amount_min != null ? String(rule.match_amount_min) : "",
+      match_amount_max: rule.match_amount_max != null ? String(rule.match_amount_max) : "",
+      match_direction: rule.match_direction || "",
+      assign_category_id: rule.assign_category_id || "",
+      assign_is_transfer: rule.assign_is_transfer === true,
+      assign_is_pass_through: rule.assign_is_pass_through === true,
+    });
+  };
+
+  const handleGenerateFromPrompt = async () => {
+    const prompt = assistantPrompt.trim();
+    if (!prompt || assistantLoading) return;
+
+    setAssistantLoading(true);
+    setAssistantMessage(null);
+
+    try {
+      const response = await fetch("/api/assistant/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionHint: "create_rule",
+          messages: [{ role: "user", content: prompt }],
+          debug: debugEnabled,
+        }),
+      });
+      const payload = (await response.json()) as AssistantChatResult & { error?: string };
+      const parsedRule =
+        payload.rule ||
+        (payload.action?.type === "create_rule" ? payload.action.preview : null);
+
+      if (parsedRule) {
+        applyRuleToForm(parsedRule as ParsedRulePayload);
+      }
+      if (debugEnabled) {
+        setDebugEntries((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            request: {
+              actionHint: "create_rule",
+              messages: [{ role: "user", content: prompt }],
+              debug: true,
+            },
+            response: payload,
+            debug: payload.debug,
+          },
+        ]);
+      }
+      setAssistantMessage(payload.assistant_message || payload.clarification || payload.error || "No suggestion returned.");
+    } catch {
+      setAssistantMessage("Failed to generate rule from prompt.");
+    } finally {
+      setAssistantLoading(false);
+    }
+  };
+
   return (
     <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 space-y-4">
+      <div className="rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/60 dark:bg-blue-900/10 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-medium text-blue-900 dark:text-blue-200">Generate From Prompt</div>
+          <button
+            type="button"
+            className={`text-xs px-2 py-1 rounded-md border ${
+              debugEnabled
+                ? "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20"
+                : "border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300"
+            }`}
+            onClick={() => setDebugEnabled((prev) => !prev)}
+          >
+            Debug {debugEnabled ? "On" : "Off"}
+          </button>
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={assistantPrompt}
+            onChange={(e) => setAssistantPrompt(e.target.value)}
+            className="w-full px-3 py-2 border border-blue-200 dark:border-blue-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+            placeholder="e.g., Categorize Starbucks under $20 outflow as Coffee"
+          />
+          <button
+            type="button"
+            onClick={handleGenerateFromPrompt}
+            disabled={assistantLoading || !assistantPrompt.trim()}
+            className="px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {assistantLoading ? "Generating..." : "Generate"}
+          </button>
+        </div>
+        {assistantMessage && (
+          <div className="text-xs text-blue-700 dark:text-blue-300">{assistantMessage}</div>
+        )}
+        {debugEnabled && (
+          <div className="rounded border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/10 p-2 space-y-2">
+            <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">Debug trace (latest first)</div>
+            {debugEntries.length === 0 && (
+              <div className="text-xs text-amber-700 dark:text-amber-400">Run Generate to capture request/response.</div>
+            )}
+            {debugEntries.slice(-2).reverse().map((entry) => (
+              <details key={entry.id}>
+                <summary className="text-[11px] cursor-pointer text-amber-700 dark:text-amber-300">
+                  Prompt: {entry.debug?.contextual_prompt || "N/A"}
+                </summary>
+                <pre className="mt-1 max-h-40 overflow-auto text-[10px] whitespace-pre-wrap break-all">
+                  {JSON.stringify({ request: entry.request, response: entry.response, debug: entry.debug }, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">

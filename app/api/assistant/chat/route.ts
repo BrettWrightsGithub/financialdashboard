@@ -11,6 +11,7 @@ import type {
   AssistantSplitLinePreview,
 } from "@/lib/assistant/types";
 import type { ParsedRulePayload } from "@/lib/assistant/types";
+import { logTelemetryEvent } from "@/lib/telemetry";
 
 interface CategoryRow {
   id: string;
@@ -319,7 +320,35 @@ async function parseCreateRule(prompt: string, categories: CategoryRow[]): Promi
 }
 
 export async function POST(request: NextRequest) {
+  const startedAt = Date.now();
   try {
+    const track = async (
+      status: number,
+      debug: AssistantChatResult["debug"] | undefined,
+      metadata: Record<string, unknown>
+    ) => {
+      const llm = debug?.llm_call;
+      await logTelemetryEvent({
+        eventType: "assistant_call",
+        eventName: "assistant_chat",
+        route: "/api/assistant/chat",
+        httpMethod: "POST",
+        httpStatus: status,
+        latencyMs: Date.now() - startedAt,
+        provider: llm?.provider ?? null,
+        model: llm?.model ?? null,
+        promptTokens: llm?.prompt_tokens ?? null,
+        completionTokens: llm?.completion_tokens ?? null,
+        totalTokens: llm?.total_tokens ?? null,
+        userAgent: request.headers.get("user-agent"),
+        metadata: {
+          ...metadata,
+          used_regex_fallback: debug?.used_regex_fallback ?? null,
+          fallback_reason: debug?.fallback_reason ?? null,
+        },
+      });
+    };
+
     const body = (await request.json()) as Partial<AssistantChatRequest>;
     const messages = Array.isArray(body?.messages) ? (body.messages as AssistantChatMessage[]) : [];
     const selectedTransaction = body?.selectedTransaction;
@@ -338,6 +367,7 @@ export async function POST(request: NextRequest) {
       if (debugEnabled) {
         response.debug = { contextual_prompt: "" };
       }
+      await track(200, response.debug, { assistant_status: response.status, action_type: "none" });
       return NextResponse.json(response);
     }
 
@@ -369,6 +399,7 @@ export async function POST(request: NextRequest) {
       }
       // Keep legacy field behavior explicit.
       result.rule = parsedRule;
+      await track(200, result.debug, { assistant_status: result.status, action_type: actionType });
       return NextResponse.json(result);
     }
 
@@ -397,6 +428,7 @@ export async function POST(request: NextRequest) {
         status: response.status,
         has_preview: Boolean(action),
       });
+      await track(200, response.debug, { assistant_status: response.status, action_type: actionType });
       return NextResponse.json(response);
     }
 
@@ -446,6 +478,7 @@ export async function POST(request: NextRequest) {
         status: response.status,
         lines_count: lines.length,
       });
+      await track(200, response.debug, { assistant_status: response.status, action_type: actionType, lines_count: lines.length });
       return NextResponse.json(response);
     }
 
@@ -482,6 +515,7 @@ export async function POST(request: NextRequest) {
         status: response.status,
         has_preview: Boolean(preview),
       });
+      await track(200, response.debug, { assistant_status: response.status, action_type: actionType, has_preview: Boolean(preview) });
       return NextResponse.json(response);
     }
 
@@ -523,9 +557,20 @@ export async function POST(request: NextRequest) {
       suggestions: changedSuggestions.length,
     });
 
+    await track(200, response.debug, { assistant_status: response.status, action_type: actionType, suggestions: changedSuggestions.length });
     return NextResponse.json(response);
   } catch (error) {
     console.error("Assistant chat error:", error);
+    await logTelemetryEvent({
+      eventType: "assistant_call",
+      eventName: "assistant_chat",
+      route: "/api/assistant/chat",
+      httpMethod: "POST",
+      httpStatus: 500,
+      latencyMs: Date.now() - startedAt,
+      userAgent: request.headers.get("user-agent"),
+      metadata: { assistant_status: "error" },
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to process assistant chat" },
       { status: 500 }

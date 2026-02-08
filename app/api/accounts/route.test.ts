@@ -22,6 +22,10 @@ vi.mock("@/lib/supabase", () => ({
 
 import { GET } from "./route";
 
+function createRequest() {
+  return new Request("http://localhost/api/accounts", { method: "GET" }) as any;
+}
+
 describe("/api/accounts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -31,7 +35,7 @@ describe("/api/accounts", () => {
     const accounts = [{ id: "acct-1", name: "Checking" }];
     mockSupabase.order.mockResolvedValueOnce({ data: accounts, error: null } as any);
 
-    const response = await GET();
+    const response = await GET(createRequest());
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -55,7 +59,7 @@ describe("/api/accounts", () => {
   it("returns 500 when Supabase query fails", async () => {
     mockSupabase.order.mockResolvedValueOnce({ data: null, error: { message: "db exploded" } } as any);
 
-    const response = await GET();
+    const response = await GET(createRequest());
     const body = await response.json();
 
     expect(response.status).toBe(500);
@@ -67,7 +71,7 @@ describe("/api/accounts", () => {
       throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
     });
 
-    const response = await GET();
+    const response = await GET(createRequest());
     const body = await response.json();
 
     expect(response.status).toBe(500);
@@ -78,7 +82,7 @@ describe("/api/accounts", () => {
     const accounts = [{ id: "acct-1", name: "Checking", institution: "Legacy Bank" }];
     mockSupabase.order.mockResolvedValueOnce({ data: accounts, error: null } as any);
 
-    const response = await GET();
+    const response = await GET(createRequest());
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -101,7 +105,7 @@ describe("/api/accounts", () => {
     const accounts = [{ id: "acct-1", name: "Checking", account_type: "checking" }];
     mockSupabase.order.mockResolvedValueOnce({ data: accounts, error: null } as any);
 
-    const response = await GET();
+    const response = await GET(createRequest());
     const body = await response.json();
 
     expect(response.status).toBe(200);

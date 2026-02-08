@@ -8,6 +8,7 @@ import type {
   AssistantChatResult,
   ParsedRulePayload,
 } from "@/lib/assistant/types";
+import { trackClientEvent } from "@/lib/clientTelemetry";
 import { RulePreviewCard } from "./RulePreviewCard";
 import type { TransactionWithDetails } from "@/types/database";
 
@@ -71,10 +72,19 @@ export function ChatAssistant({
     if (!selectedTransaction) return "No transaction selected.";
     return `Selected: ${selectedTransaction.description_clean || selectedTransaction.description_raw} (${selectedTransaction.amount})`;
   }, [selectedTransaction]);
+  const emitBehaviorEvent = (eventName: string, metadata?: Record<string, unknown>) => {
+    void trackClientEvent(eventName, {
+      metadata: {
+        surface: "chat_assistant",
+        ...metadata,
+      },
+    });
+  };
 
   const confirmRule = async () => {
     if (!previewRule?.assign_category_id) return;
     setConfirming(true);
+    emitBehaviorEvent("assistant_confirm_rule_attempt", { has_preview_rule: true });
 
     try {
       const response = await fetch("/api/categorization/rules", {
@@ -94,18 +104,21 @@ export function ChatAssistant({
           ...prev,
           createMessage("assistant", "Looks good. I added that rule."),
         ]);
+        emitBehaviorEvent("assistant_confirm_rule_success");
       } else {
         const payload = await response.json();
         setMessages((prev) => [
           ...prev,
           createMessage("assistant", payload.error || "Failed to save rule."),
         ]);
+        emitBehaviorEvent("assistant_confirm_rule_failed", { reason: "api_error" });
       }
     } catch {
       setMessages((prev) => [
         ...prev,
         createMessage("assistant", "Failed to save rule."),
       ]);
+      emitBehaviorEvent("assistant_confirm_rule_failed", { reason: "network_error" });
     } finally {
       setConfirming(false);
     }
@@ -120,6 +133,10 @@ export function ChatAssistant({
     setInput("");
     setLoading(true);
     setCreatedRule(null);
+    emitBehaviorEvent("assistant_send", {
+      debug_enabled: debugEnabled,
+      has_selected_transaction: Boolean(selectedTransaction),
+    });
 
     try {
       const requestBody = {
@@ -140,6 +157,11 @@ export function ChatAssistant({
       const payload: AssistantResponse = await response.json();
       const text = payload.assistant_message || payload.error || "I couldn't process that. Please try again.";
       setMessages((prev) => [...prev, createMessage("assistant", text)]);
+      emitBehaviorEvent("assistant_response", {
+        status: payload.status || "unknown",
+        action_type: payload.action?.type || "none",
+        has_error: Boolean(payload.error),
+      });
       const nextRule =
         payload.rule ||
         (payload.action?.type === "create_rule" && payload.action.preview
@@ -162,12 +184,14 @@ export function ChatAssistant({
         ...prev,
         createMessage("assistant", "I couldn't reach the assistant service."),
       ]);
+      emitBehaviorEvent("assistant_response", { status: "network_error", action_type: "none", has_error: true });
     } finally {
       setLoading(false);
     }
   };
 
   const startNewChat = () => {
+    emitBehaviorEvent("assistant_new_chat");
     setMessages([INITIAL_MESSAGE]);
     setPreviewRule(null);
     setCreatedRule(null);
@@ -179,7 +203,13 @@ export function ChatAssistant({
     <>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          setOpen((value) => {
+            const next = !value;
+            emitBehaviorEvent(next ? "assistant_opened" : "assistant_closed");
+            return next;
+          });
+        }}
         className="fixed bottom-5 right-5 z-40 rounded-full bg-blue-600 text-white px-4 py-3 text-sm shadow-lg min-h-[44px]"
       >
         Assistant
@@ -190,17 +220,23 @@ export function ChatAssistant({
           <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
             <div className="flex items-center justify-between gap-2">
               <div className="font-semibold">{title}</div>
-              <button
-                type="button"
-                className={`text-xs px-2 py-1 rounded-md border ${
-                  debugEnabled
-                    ? "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20"
-                    : "border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300"
-                }`}
-                onClick={() => setDebugEnabled((prev) => !prev)}
-              >
-                Debug {debugEnabled ? "On" : "Off"}
-              </button>
+                <button
+                  type="button"
+                  className={`text-xs px-2 py-1 rounded-md border ${
+                    debugEnabled
+                      ? "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20"
+                      : "border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300"
+                  }`}
+                  onClick={() => {
+                    setDebugEnabled((prev) => {
+                      const next = !prev;
+                      emitBehaviorEvent("assistant_debug_toggled", { enabled: next });
+                      return next;
+                    });
+                  }}
+                >
+                  Debug {debugEnabled ? "On" : "Off"}
+                </button>
             </div>
             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{contextHint}</div>
           </div>
@@ -212,7 +248,10 @@ export function ChatAssistant({
                   <button
                     key={prompt}
                     type="button"
-                    onClick={() => setInput(prompt)}
+                    onClick={() => {
+                      setInput(prompt);
+                      emitBehaviorEvent("assistant_quick_prompt_selected");
+                    }}
                     className="rounded-full border border-slate-300 dark:border-slate-600 px-2.5 py-1 text-[11px] text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
                   >
                     {prompt}

@@ -75,10 +75,21 @@ async function callOpenAI(input: ProviderInput): Promise<ProviderCallResult> {
     });
 
     const payload = await response.json().catch(() => null);
+    const promptTokens =
+      typeof payload?.usage?.prompt_tokens === "number" ? payload.usage.prompt_tokens : undefined;
+    const completionTokens =
+      typeof payload?.usage?.completion_tokens === "number"
+        ? payload.usage.completion_tokens
+        : undefined;
+    const totalTokens =
+      typeof payload?.usage?.total_tokens === "number" ? payload.usage.total_tokens : undefined;
     const responseDebug = {
       ...debugBase,
       status: response.status,
       response: payload,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: totalTokens,
     };
 
     if (!response.ok) {
@@ -150,10 +161,21 @@ async function callAnthropic(input: ProviderInput): Promise<ProviderCallResult> 
     });
 
     const payload = await response.json().catch(() => null);
+    const promptTokens =
+      typeof payload?.usage?.input_tokens === "number" ? payload.usage.input_tokens : undefined;
+    const completionTokens =
+      typeof payload?.usage?.output_tokens === "number" ? payload.usage.output_tokens : undefined;
+    const totalTokens =
+      typeof promptTokens === "number" && typeof completionTokens === "number"
+        ? promptTokens + completionTokens
+        : undefined;
     const responseDebug = {
       ...debugBase,
       status: response.status,
       response: payload,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: totalTokens,
     };
 
     if (!response.ok) {

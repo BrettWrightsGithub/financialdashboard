@@ -4,9 +4,9 @@ import { NextRequest } from "next/server";
 const mockSupabase = {
   from: vi.fn(() => mockSupabase),
   select: vi.fn(() => mockSupabase),
-  ilike: vi.fn(() => mockSupabase),
+  eq: vi.fn(() => mockSupabase),
   limit: vi.fn(() => mockSupabase),
-  maybeSingle: vi.fn(() => mockSupabase),
+  insert: vi.fn(() => mockSupabase),
 };
 
 vi.mock("@/lib/supabase", () => ({
@@ -37,7 +37,8 @@ import { POST } from "./route";
 
 describe("/api/assistant/parse-rule", () => {
   it("returns clarification when category cannot be matched", async () => {
-    mockSupabase.maybeSingle.mockResolvedValue({ data: null, error: null } as any);
+    mockSupabase.limit.mockResolvedValue({ data: [], error: null } as any);
+    mockSupabase.insert.mockResolvedValue({ data: null, error: null } as any);
 
     const request = new NextRequest("http://localhost:3000/api/assistant/parse-rule", {
       method: "POST",

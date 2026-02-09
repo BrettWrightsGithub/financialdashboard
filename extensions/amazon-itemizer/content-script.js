@@ -84,14 +84,83 @@ function pushUnique(target, value) {
   }
 }
 
+function cleanTitleCandidate(value) {
+  return normalizeWhitespace(String(value || ""))
+    .replace(/^image of\\s+/i, "")
+    .replace(/^product image of\\s+/i, "")
+    .replace(/^item:\\s+/i, "");
+}
+
+function isLikelyProductTitle(value) {
+  const title = cleanTitleCandidate(value);
+  if (!title || title.length < 5 || title.length > 240) {
+    return false;
+  }
+
+  if (ORDER_ID_REGEX.test(title)) {
+    return false;
+  }
+
+  if (!/[a-zA-Z]/.test(title)) {
+    return false;
+  }
+
+  if (
+    /^(buy it again|write a product review|return or replace items|track package|view invoice|order details|view or edit order|get product support|archive order|cancel items|delivered|arriving|shipped|order total|payment method|gift card|track your package|amazon day delivery|subscription)$/i.test(
+      title
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    /(visit the store|amazon\.com|amazon order|free returns|sold by|leave seller feedback|eligible for return)/i.test(
+      title
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function extractLineBasedTitles(container) {
+  const titles = [];
+  const lines = String(container?.innerText || "")
+    .split("\\n")
+    .map((line) => cleanTitleCandidate(line))
+    .filter(Boolean);
+
+  for (const line of lines) {
+    if (!isLikelyProductTitle(line)) {
+      continue;
+    }
+
+    pushUnique(titles, line);
+    if (titles.length >= 12) {
+      break;
+    }
+  }
+
+  return titles;
+}
+
 function extractItemTitles(container) {
   const titles = [];
 
   const selectors = [
+    ".yohtmlc-product-title",
+    '[data-a-word-break=\"normal\"]',
+    "span.a-truncate-cut",
+    "span.a-truncate-full",
+    "h5",
+    "h6",
+    'a.a-link-normal[href*=\"/dp/\"] span',
+    'a.a-link-normal[href*=\"/gp/product/\"] span',
     'a[href*="/dp/"]',
     'a[href*="/gp/product/"]',
-    "span.a-truncate-full",
-    "span.a-size-base-plus",
+    "span.a-size-base-plus.a-color-base",
+    "span.a-size-base.a-color-base",
     "img[alt]",
   ];
 
@@ -99,12 +168,9 @@ function extractItemTitles(container) {
     const nodes = container.querySelectorAll(selector);
     for (const node of nodes) {
       const rawTitle = node.getAttribute("alt") || node.textContent || "";
-      const title = normalizeWhitespace(rawTitle);
+      const title = cleanTitleCandidate(rawTitle);
 
-      if (title.length < 4) {
-        continue;
-      }
-      if (/amazon|visit the store|buy it again|write a review/i.test(title)) {
+      if (!isLikelyProductTitle(title)) {
         continue;
       }
 
@@ -115,20 +181,40 @@ function extractItemTitles(container) {
     }
   }
 
-  return titles;
+  if (titles.length > 0) {
+    return titles;
+  }
+
+  return extractLineBasedTitles(container);
+}
+
+function allocateLineTotals(orderTotal, count) {
+  const safeCount = Math.max(1, count);
+  const safeTotal = orderTotal && orderTotal > 0 ? roundMoney(orderTotal) : roundMoney(0.01 * safeCount);
+
+  if (safeCount === 1) {
+    return [safeTotal];
+  }
+
+  const base = roundMoney(safeTotal / safeCount);
+  const totals = new Array(safeCount).fill(base);
+
+  const headSum = roundMoney(base * (safeCount - 1));
+  const tail = roundMoney(safeTotal - headSum);
+  totals[safeCount - 1] = tail > 0 ? tail : base;
+
+  return totals;
 }
 
 function buildItems(orderId, titles, orderTotal) {
   const lineTitles = titles.length ? titles : [`Amazon order ${orderId}`];
+  const totals = allocateLineTotals(orderTotal, lineTitles.length);
 
-  const fallbackTotal = orderTotal && orderTotal > 0 ? orderTotal : 0.01 * lineTitles.length;
-  const evenTotal = roundMoney(fallbackTotal / lineTitles.length);
-
-  return lineTitles.map((title) => ({
+  return lineTitles.map((title, index) => ({
     title,
     quantity: 1,
-    unit_price: evenTotal,
-    line_total: evenTotal,
+    unit_price: totals[index],
+    line_total: totals[index],
   }));
 }
 

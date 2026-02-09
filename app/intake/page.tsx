@@ -4,21 +4,35 @@ import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "rea
 
 type SourceFilter = "" | "upload" | "csv" | "amazon_extension";
 type StatusFilter = "" | "received" | "parsed" | "matched" | "needs_review" | "ready_to_apply" | "applied" | "error";
+type LinkFilter = "" | "awaiting_card_sync" | "matched_candidate" | "needs_review" | "applied";
+type LinkStatus = "awaiting_card_sync" | "matched_candidate" | "needs_review" | "applied";
 
 interface QueueArtifact {
   id: string;
   source_type: "upload" | "csv" | "amazon_extension";
   status: string;
+  marketplace?: string | null;
+  provider_order_id?: string | null;
   error_message: string | null;
-  mime_type: string | null;
-  size_bytes: number | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
   received_at: string;
+  processed_at?: string | null;
 }
 
 interface QueueExtraction {
   merchant_name: string | null;
   transaction_date: string | null;
   total_amount: number | null;
+}
+
+interface QueueMatch {
+  id: string;
+  transaction_id: string | null;
+  match_confidence: number | null;
+  match_reason: string | null;
+  status: string;
+  updated_at: string;
 }
 
 interface QueueCsvBatch {
@@ -30,19 +44,45 @@ interface QueueCsvBatch {
   applied_rows: number;
 }
 
+interface QueueRematchRun {
+  id: string;
+  source_type: "upload" | "csv" | "amazon_extension";
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  matched_count: number;
+  suggested_count: number;
+  unmatched_count: number;
+  skipped_count: number;
+  reconciled_manual_count: number;
+  processed_count: number;
+  error_message: string | null;
+}
+
 interface QueueEntry {
   artifact: QueueArtifact;
   extraction: QueueExtraction | null;
+  match: QueueMatch | null;
+  link_status: LinkStatus | null;
+  link_reason: string | null;
   csv_batch: QueueCsvBatch | null;
 }
 
 interface QueueResponse {
   queue: QueueEntry[];
+  meta?: {
+    latest_rematch_run?: QueueRematchRun | null;
+  };
   pagination: {
     total: number;
     page: number;
     limit: number;
   };
+}
+
+interface RematchResponse {
+  success: boolean;
+  rematch: QueueRematchRun;
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -72,14 +112,46 @@ function statusBadgeClass(status: string): string {
   }
 }
 
+function linkStatusLabel(status: LinkStatus): string {
+  switch (status) {
+    case "awaiting_card_sync":
+      return "Awaiting Card Sync";
+    case "matched_candidate":
+      return "Matched Candidate";
+    case "needs_review":
+      return "Needs Review";
+    case "applied":
+      return "Applied";
+  }
+}
+
+function linkStatusBadgeClass(status: LinkStatus): string {
+  switch (status) {
+    case "awaiting_card_sync":
+      return "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/20 dark:text-indigo-300 dark:border-indigo-800";
+    case "matched_candidate":
+      return "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800";
+    case "applied":
+      return "bg-slate-200 text-slate-800 border-slate-300 dark:bg-slate-700/60 dark:text-slate-100 dark:border-slate-600";
+    case "needs_review":
+    default:
+      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800";
+  }
+}
+
 export default function IntakePage() {
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
+  const [linkFilter, setLinkFilter] = useState<LinkFilter>("");
   const [loadingQueue, setLoadingQueue] = useState(true);
   const [refreshingQueue, setRefreshingQueue] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [queueTotal, setQueueTotal] = useState(0);
+  const [latestRematchRun, setLatestRematchRun] = useState<QueueRematchRun | null>(null);
+  const [runningRematch, setRunningRematch] = useState(false);
+  const [rematchMessage, setRematchMessage] = useState<string | null>(null);
+  const [rematchError, setRematchError] = useState<string | null>(null);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const [uploadingCsv, setUploadingCsv] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
@@ -107,6 +179,7 @@ export default function IntakePage() {
 
         setQueue(body.queue);
         setQueueTotal(body.pagination.total);
+        setLatestRematchRun(body.meta?.latest_rematch_run || null);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to fetch intake queue";
         setQueueError(message);
@@ -121,6 +194,14 @@ export default function IntakePage() {
   useEffect(() => {
     void loadQueue("initial");
   }, [loadQueue]);
+
+  const filteredQueue = useMemo(() => {
+    if (!linkFilter) {
+      return queue;
+    }
+
+    return queue.filter((entry) => entry.link_status === linkFilter);
+  }, [queue, linkFilter]);
 
   async function uploadArtifact(file: File, sourceType: "upload" | "csv"): Promise<void> {
     const formData = new FormData();
@@ -177,6 +258,39 @@ export default function IntakePage() {
     } finally {
       setUploadingCsv(false);
       event.target.value = "";
+    }
+  }
+
+  async function runAmazonRematch() {
+    setRunningRematch(true);
+    setRematchError(null);
+    setRematchMessage(null);
+
+    try {
+      const response = await fetch("/api/intake/rematch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "amazon_extension",
+          limit: 500,
+        }),
+      });
+
+      const body = (await response.json()) as RematchResponse | { error: string };
+      if (!response.ok || !("rematch" in body)) {
+        throw new Error("error" in body ? body.error : "Failed to run Amazon rematch");
+      }
+
+      const summary = body.rematch;
+      setRematchMessage(
+        `Rematch complete. Processed ${summary.processed_count}, matched ${summary.matched_count}, needs review ${summary.suggested_count - summary.matched_count}, unmatched ${summary.unmatched_count}.`
+      );
+      await loadQueue("refresh");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to run Amazon rematch";
+      setRematchError(message);
+    } finally {
+      setRunningRematch(false);
     }
   }
 
@@ -242,18 +356,45 @@ export default function IntakePage() {
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Processing Queue</h2>
             <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">{queueTotal} artifact(s)</p>
+            {latestRematchRun && (
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Last Amazon re-match: {formatDateTime(latestRematchRun.finished_at || latestRematchRun.started_at)} ({latestRematchRun.status})
+              </p>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={() => void loadQueue("refresh")}
-            disabled={loadingQueue || refreshingQueue}
-            className="btn-secondary text-sm"
-          >
-            {refreshingQueue ? "Refreshing..." : "Refresh"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void runAmazonRematch()}
+              disabled={loadingQueue || refreshingQueue || runningRematch}
+              className="rounded-lg border border-blue-700 bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
+            >
+              {runningRematch ? "Re-matching..." : "Re-match Amazon Orders"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadQueue("refresh")}
+              disabled={loadingQueue || refreshingQueue || runningRematch}
+              className="btn-secondary text-sm"
+            >
+              {refreshingQueue ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {rematchMessage && (
+          <p className="text-sm rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-2 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-300">
+            {rematchMessage}
+          </p>
+        )}
+
+        {rematchError && (
+          <p className="text-sm rounded-lg border border-red-200 bg-red-50 text-red-700 px-3 py-2 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
+            {rematchError}
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
             <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Source</label>
             <select
@@ -285,6 +426,21 @@ export default function IntakePage() {
               <option value="error">error</option>
             </select>
           </div>
+
+          <div>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Amazon Link Status</label>
+            <select
+              className="select mt-1"
+              value={linkFilter}
+              onChange={(event) => setLinkFilter(event.target.value as LinkFilter)}
+            >
+              <option value="">All</option>
+              <option value="awaiting_card_sync">Awaiting Card Sync</option>
+              <option value="matched_candidate">Matched Candidate</option>
+              <option value="needs_review">Needs Review</option>
+              <option value="applied">Applied</option>
+            </select>
+          </div>
         </div>
 
         {queueError && (
@@ -295,8 +451,8 @@ export default function IntakePage() {
 
         {loadingQueue ? (
           <p className="text-sm text-slate-500 dark:text-slate-400">Loading queue...</p>
-        ) : queue.length === 0 ? (
-          <p className="text-sm text-slate-500 dark:text-slate-400">No intake artifacts yet.</p>
+        ) : filteredQueue.length === 0 ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">No intake artifacts match the current filters.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
             <table className="min-w-full text-sm">
@@ -305,19 +461,20 @@ export default function IntakePage() {
                   <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">Received</th>
                   <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">Source</th>
                   <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">Status</th>
+                  <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">Link</th>
                   <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">Details</th>
                   <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">ID</th>
                 </tr>
               </thead>
               <tbody>
-                {queue.map((entry) => {
+                {filteredQueue.map((entry) => {
                   const detail =
                     entry.artifact.source_type === "csv"
                       ? entry.csv_batch
                         ? `${entry.csv_batch.valid_rows}/${entry.csv_batch.total_rows} valid, ${entry.csv_batch.duplicate_rows} duplicate`
                         : `${entry.artifact.mime_type || "csv"} • ${formatFileSize(entry.artifact.size_bytes)}`
                       : entry.extraction?.merchant_name
-                        ? `${entry.extraction.merchant_name} • ${entry.extraction.total_amount ?? "n/a"}`
+                        ? `${entry.extraction.merchant_name} • ${entry.extraction.total_amount ?? "n/a"}${entry.artifact.provider_order_id ? ` • Order ${entry.artifact.provider_order_id}` : ""}`
                         : `${entry.artifact.mime_type || "upload"} • ${formatFileSize(entry.artifact.size_bytes)}`;
 
                   return (
@@ -330,6 +487,20 @@ export default function IntakePage() {
                         </span>
                         {entry.artifact.error_message && (
                           <p className="text-xs text-red-600 dark:text-red-300 mt-1">{entry.artifact.error_message}</p>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {entry.link_status ? (
+                          <div className="space-y-1">
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${linkStatusBadgeClass(entry.link_status)}`}>
+                              {linkStatusLabel(entry.link_status)}
+                            </span>
+                            {entry.link_reason && (
+                              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm">{entry.link_reason}</p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400 dark:text-slate-500">-</span>
                         )}
                       </td>
                       <td className="px-3 py-2 text-slate-700 dark:text-slate-200">{detail}</td>

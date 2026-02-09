@@ -32,6 +32,16 @@ interface IntakeExtractionRow {
   total_amount: number | null;
 }
 
+interface IntakeMatchRow {
+  id: string;
+  extraction_id: string;
+  transaction_id: string | null;
+  match_confidence: number | null;
+  match_reason: string | null;
+  status: string;
+  updated_at: string;
+}
+
 interface IntakeLineItemRow {
   id: string;
   extraction_id: string;
@@ -73,6 +83,60 @@ interface CsvImportBatchRow {
   applied_rows: number;
   created_at: string;
   updated_at: string;
+}
+
+interface IntakeRematchRunRow {
+  id: string;
+  source_type: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  matched_count: number;
+  suggested_count: number;
+  unmatched_count: number;
+  skipped_count: number;
+  reconciled_manual_count: number;
+  processed_count: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type LinkStatus = "awaiting_card_sync" | "matched_candidate" | "needs_review" | "applied";
+
+function isMissingRelationError(error: { message?: string } | null): boolean {
+  if (!error?.message) {
+    return false;
+  }
+
+  return (
+    error.message.includes("Could not find the table") ||
+    error.message.includes("does not exist") ||
+    error.message.includes("schema cache")
+  );
+}
+
+function deriveLinkStatus(artifactStatus: string, match: IntakeMatchRow | null): LinkStatus {
+  if (artifactStatus === "applied" || match?.status === "applied") {
+    return "applied";
+  }
+
+  if (match?.status === "suggested" && match.transaction_id) {
+    if ((match.match_confidence ?? 0) >= 0.9) {
+      return "matched_candidate";
+    }
+    return "needs_review";
+  }
+
+  if (match?.status === "confirmed" && match.transaction_id) {
+    return "matched_candidate";
+  }
+
+  if (match?.match_reason?.toLowerCase().includes("sync your card account first")) {
+    return "awaiting_card_sync";
+  }
+
+  return "needs_review";
 }
 
 export async function GET(request: NextRequest) {
@@ -121,10 +185,12 @@ export async function GET(request: NextRequest) {
     const artifactIds = artifactRows.map((artifact) => artifact.id);
 
     let extractionRows: IntakeExtractionRow[] = [];
+    let matchRows: IntakeMatchRow[] = [];
     let lineItemRows: IntakeLineItemRow[] = [];
     let externalOrderRows: ExternalOrderRow[] = [];
     let externalOrderItemRows: ExternalOrderItemRow[] = [];
     let csvBatchRows: CsvImportBatchRow[] = [];
+    let latestRematchRun: IntakeRematchRunRow | null = null;
 
     if (artifactIds.length > 0) {
       const { data: extractions, error: extractionError } = await supabase
@@ -139,6 +205,17 @@ export async function GET(request: NextRequest) {
 
       const extractionIds = extractionRows.map((row) => row.id);
       if (extractionIds.length > 0) {
+        const { data: matches, error: matchesError } = await supabase
+          .from("intake_matches")
+          .select("id, extraction_id, transaction_id, match_confidence, match_reason, status, updated_at")
+          .in("extraction_id", extractionIds);
+
+        if (matchesError) {
+          return NextResponse.json({ error: matchesError.message }, { status: 500 });
+        }
+
+        matchRows = (matches || []) as IntakeMatchRow[];
+
         const { data: lineItems, error: lineItemError } = await supabase
           .from("intake_line_items")
           .select("id, extraction_id, line_index, description, quantity, unit_price, line_total")
@@ -183,11 +260,35 @@ export async function GET(request: NextRequest) {
         .select("id, artifact_id, status, total_rows, valid_rows, invalid_rows, duplicate_rows, applied_rows, created_at, updated_at")
         .in("artifact_id", artifactIds);
 
-      if (csvBatchError) {
+      if (csvBatchError && !isMissingRelationError(csvBatchError)) {
         return NextResponse.json({ error: csvBatchError.message }, { status: 500 });
       }
 
-      csvBatchRows = (csvBatches || []) as CsvImportBatchRow[];
+      csvBatchRows = isMissingRelationError(csvBatchError)
+        ? []
+        : ((csvBatches || []) as CsvImportBatchRow[]);
+    }
+
+    let rematchRunQuery = supabase
+      .from("intake_rematch_runs")
+      .select(
+        "id, source_type, status, started_at, finished_at, matched_count, suggested_count, unmatched_count, skipped_count, reconciled_manual_count, processed_count, error_message, created_at, updated_at"
+      )
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (source) {
+      rematchRunQuery = rematchRunQuery.eq("source_type", source);
+    } else {
+      rematchRunQuery = rematchRunQuery.eq("source_type", "amazon_extension");
+    }
+
+    const { data: rematchRuns, error: rematchRunsError } = await rematchRunQuery;
+    if (rematchRunsError && !isMissingRelationError(rematchRunsError)) {
+      return NextResponse.json({ error: rematchRunsError.message }, { status: 500 });
+    }
+    if (!isMissingRelationError(rematchRunsError) && rematchRuns && rematchRuns.length > 0) {
+      latestRematchRun = rematchRuns[0] as IntakeRematchRunRow;
     }
 
     const lineItemsByExtraction = new Map<string, IntakeLineItemRow[]>();
@@ -200,6 +301,11 @@ export async function GET(request: NextRequest) {
     const extractionByArtifact = new Map<string, IntakeExtractionRow>();
     for (const extraction of extractionRows) {
       extractionByArtifact.set(extraction.artifact_id, extraction);
+    }
+
+    const matchByExtraction = new Map<string, IntakeMatchRow>();
+    for (const match of matchRows) {
+      matchByExtraction.set(match.extraction_id, match);
     }
 
     const externalOrderByArtifact = new Map<string, ExternalOrderRow>();
@@ -223,6 +329,8 @@ export async function GET(request: NextRequest) {
       const extraction = extractionByArtifact.get(artifact.id) || null;
       const externalOrder = externalOrderByArtifact.get(artifact.id) || null;
       const csvBatch = csvBatchByArtifact.get(artifact.id) || null;
+      const match = extraction ? matchByExtraction.get(extraction.id) || null : null;
+      const linkStatus = artifact.source_type === "amazon_extension" ? deriveLinkStatus(artifact.status, match) : null;
 
       return {
         artifact,
@@ -238,12 +346,18 @@ export async function GET(request: NextRequest) {
               items: externalItemsByOrder.get(externalOrder.id) || [],
             }
           : null,
+        match,
+        link_status: linkStatus,
+        link_reason: match?.match_reason || null,
         csv_batch: csvBatch,
       };
     });
 
     return NextResponse.json({
       queue,
+      meta: {
+        latest_rematch_run: latestRematchRun,
+      },
       pagination: {
         page,
         limit,

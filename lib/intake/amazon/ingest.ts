@@ -31,26 +31,49 @@ async function upsertOrder(
   order: NormalizedAmazonOrder,
   now: string
 ): Promise<{ artifactId: string; extractionId: string; externalOrderId: string }> {
-  const artifactId = await requireSingleId(
-    supabase
-      .from("intake_artifacts")
-      .upsert(
-        {
-          source_type: "amazon_extension",
-          marketplace,
-          provider_order_id: order.provider_order_id,
-          status: "parsed",
-          raw_payload_json: order.raw_order_json,
-          received_at: now,
-          processed_at: now,
-          updated_at: now,
-        },
-        { onConflict: "source_type,marketplace,provider_order_id" }
+  const artifactPayload = {
+    source_type: "amazon_extension",
+    marketplace,
+    provider_order_id: order.provider_order_id,
+    status: "parsed",
+    raw_payload_json: order.raw_order_json,
+    received_at: now,
+    processed_at: now,
+    updated_at: now,
+  };
+
+  const { data: existingArtifact, error: existingArtifactError } = await supabase
+    .from("intake_artifacts")
+    .select("id")
+    .eq("source_type", "amazon_extension")
+    .eq("marketplace", marketplace)
+    .eq("provider_order_id", order.provider_order_id)
+    .maybeSingle();
+
+  if (existingArtifactError) {
+    throw new Error(
+      `Failed to query intake artifact for order ${order.provider_order_id}: ${existingArtifactError.message}`
+    );
+  }
+
+  const artifactId = existingArtifact?.id
+    ? await requireSingleId(
+        supabase
+          .from("intake_artifacts")
+          .update(artifactPayload)
+          .eq("id", existingArtifact.id)
+          .select("id")
+          .single(),
+        `Failed to update intake artifact for order ${order.provider_order_id}`
       )
-      .select("id")
-      .single(),
-    `Failed to upsert intake artifact for order ${order.provider_order_id}`
-  );
+    : await requireSingleId(
+        supabase
+          .from("intake_artifacts")
+          .insert(artifactPayload)
+          .select("id")
+          .single(),
+        `Failed to insert intake artifact for order ${order.provider_order_id}`
+      );
 
   const extractionId = await requireSingleId(
     supabase

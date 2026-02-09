@@ -6,7 +6,7 @@ const STORAGE_KEYS = {
 };
 
 const DEFAULT_SETTINGS = {
-  apiBaseUrl: "http://localhost:3000",
+  apiBaseUrl: "http://localhost:3002",
   maxPagesPerSync: 10,
   intakePath: "/intake?source=amazon_extension",
 };

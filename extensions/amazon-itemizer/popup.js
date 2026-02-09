@@ -84,6 +84,14 @@ async function refreshStatus() {
 }
 
 async function runSync() {
+  const confirmed = window.confirm(
+    "Sync will open a temporary Amazon Orders tab in the background, scan pages, and close that tab when done. Continue?"
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
   setRunningState(true);
   byId("statusText").textContent = "Starting sync...";
 
@@ -98,7 +106,7 @@ async function runSync() {
 
 async function openIntake() {
   const response = await refreshStatus();
-  const base = String(response?.settings?.apiBaseUrl || "http://localhost:3000").replace(/\/$/, "");
+  const base = String(response?.settings?.apiBaseUrl || "http://localhost:3002").replace(/\/$/, "");
   const intakePath = response?.settings?.intakePath || "/intake?source=amazon_extension";
   const url = `${base}${intakePath.startsWith("/") ? "" : "/"}${intakePath}`;
   await chrome.tabs.create({ url });

@@ -18,7 +18,7 @@ It supports pagination and incremental sync using a stored cursor (`last_order_d
 ## Configure
 
 1. Click the extension icon, then click **Settings**.
-2. Set **API Base URL** to your running app (default: `http://localhost:3000`).
+2. Set **API Base URL** to your running app (default: `http://localhost:3002`).
 3. Keep **Max Pages Per Sync** at a safe value like `10` while validating.
 
 ## Run a Sync
@@ -27,6 +27,8 @@ It supports pagination and incremental sync using a stored cursor (`last_order_d
 2. Open the extension popup.
 3. Click **Sync Now**.
 4. Open Intake from popup (**Open Intake**) to review uploaded orders.
+
+During sync, the extension opens a temporary Amazon Orders tab in the background and closes it automatically when finished.
 
 ## Notes
 

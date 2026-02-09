@@ -94,6 +94,13 @@ body {
   margin-top: 10px;
 }
 
+.sync-note {
+  margin: 10px 2px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #475569;
+}
+
 .btn {
   width: 100%;
   border: 1px solid #cbd5e1;

@@ -1,5 +1,5 @@
 const DEFAULT_SETTINGS = {
-  apiBaseUrl: "http://localhost:3000",
+  apiBaseUrl: "http://localhost:3002",
   maxPagesPerSync: 10,
 };
 

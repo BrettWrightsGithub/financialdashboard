@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Amazon Itemizer Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Amazon Itemizer Settings</h1>
+      <p class="subtle">Configure where the extension sends scraped orders.</p>
+
+      <form id="settingsForm" class="card">
+        <label class="field">
+          <span>API Base URL</span>
+          <input id="apiBaseUrl" type="url" placeholder="http://localhost:3002" required />
+        </label>
+
+        <label class="field">
+          <span>Max Pages Per Sync</span>
+          <input id="maxPagesPerSync" type="number" min="1" max="50" required />
+        </label>
+
+        <p class="hint">
+          For local development, keep the API URL at <code>http://localhost:3002</code>. If you use another host,
+          Chrome will ask for permission when syncing.
+        </p>
+
+        <div class="actions">
+          <button type="submit" class="btn btn-primary">Save Settings</button>
+          <button id="resetDefaults" type="button" class="btn">Reset Defaults</button>
+        </div>
+
+        <p id="saveMessage" class="save-message"></p>
+      </form>
+    </main>
+
+    <script src="options.js" type="module"></script>
+  </body>
+</html>

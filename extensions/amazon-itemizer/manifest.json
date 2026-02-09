@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Financial Dashboard Amazon Itemizer",
+  "description": "Capture Amazon order line items and sync them to Financial Dashboard Intake.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://www.amazon.com/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "http://localhost:3002/*",
+    "http://127.0.0.1:3002/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Amazon Itemizer",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://www.amazon.com/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

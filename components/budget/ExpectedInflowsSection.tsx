@@ -32,6 +32,7 @@ export function ExpectedInflowsSection({
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
   const [assistantPreview, setAssistantPreview] = useState<AssistantAction<"create_expected_inflow"> | null>(null);
+  const [assistantHistory, setAssistantHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [debugEnabled, setDebugEnabled] = useState(false);
   const [debugEntries, setDebugEntries] = useState<Array<{
     id: string;
@@ -188,18 +189,21 @@ export function ExpectedInflowsSection({
     setAssistantPreview(null);
 
     try {
+      const nextMessages = [...assistantHistory, { role: "user" as const, content: prompt }];
       const response = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           actionHint: "create_expected_inflow",
           month,
-          messages: [{ role: "user", content: prompt }],
+          messages: nextMessages,
           debug: debugEnabled,
         }),
       });
       const payload = (await response.json()) as AssistantChatResult & { error?: string };
-      setAssistantMessage(payload.assistant_message || payload.error || "No parsed inflow was returned.");
+      const assistantReply = payload.assistant_message || payload.error || "No parsed inflow was returned.";
+      setAssistantMessage(assistantReply);
+      setAssistantHistory((prev) => [...prev, { role: "user", content: prompt }, { role: "assistant", content: assistantReply }]);
       if (debugEnabled) {
         setDebugEntries((prev) => [
           ...prev,
@@ -208,7 +212,7 @@ export function ExpectedInflowsSection({
             request: {
               actionHint: "create_expected_inflow",
               month,
-              messages: [{ role: "user", content: prompt }],
+              messages: nextMessages,
               debug: true,
             },
             response: payload,

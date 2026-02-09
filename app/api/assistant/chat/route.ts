@@ -52,6 +52,55 @@ function parseAmountFromText(value: string): number | null {
   return Number.isFinite(amount) ? amount : null;
 }
 
+function extractLatestUserMessage(messages: AssistantChatMessage[]): string {
+  return (
+    messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content.trim())
+      .filter(Boolean)
+      .slice(-1)[0] || ""
+  );
+}
+
+function buildLlmContextualPrompt(
+  messages: AssistantChatMessage[],
+  selectedTransaction: unknown,
+  categories: CategoryRow[]
+): string {
+  const latestUserMessage = extractLatestUserMessage(messages);
+  if (!latestUserMessage) return "";
+
+  const history = messages
+    .map((message) => ({ role: message.role, content: message.content.trim() }))
+    .filter((message) => message.content.length > 0)
+    .slice(-10)
+    .map((message) => `${message.role}: ${message.content}`)
+    .join("\n");
+
+  const categoryContext = categories.length > 0
+    ? `Available categories (pick from existing): ${categories.map((category) => category.name).join(", ")}.`
+    : "";
+
+  let txContext = "";
+  if (selectedTransaction && typeof selectedTransaction === "object") {
+    const tx = selectedTransaction as Record<string, unknown>;
+    const description =
+      (typeof tx.description_clean === "string" && tx.description_clean.trim()) ||
+      (typeof tx.description_raw === "string" && tx.description_raw.trim()) ||
+      "";
+
+    const amount = typeof tx.amount === "number" ? tx.amount : null;
+    txContext = description
+      ? `Selected transaction context: ${description}${amount !== null ? ` (${amount})` : ""}.`
+      : "";
+  }
+
+  return [txContext, categoryContext, history ? `Conversation history:\n${history}` : "", `Current user request: ${latestUserMessage}`]
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
 function buildContextualPrompt(messages: AssistantChatMessage[], selectedTransaction: unknown): string {
   const latestUserMessage = messages
     .filter((message) => message.role === "user")
@@ -356,9 +405,9 @@ export async function POST(request: NextRequest) {
       ? body.selectedTransactionIds.filter((id): id is string => typeof id === "string" && id.length > 0)
       : [];
     const debugEnabled = body?.debug === true;
-
-    const prompt = buildContextualPrompt(messages, selectedTransaction);
-    if (!prompt) {
+    const latestUserPrompt = extractLatestUserMessage(messages);
+    const lightweightContextPrompt = buildContextualPrompt(messages, selectedTransaction);
+    if (!latestUserPrompt) {
       const response: AssistantChatResult = {
         status: "ask_details",
         assistant_message: "How can I help? You can ask me to create a rule or preview a bulk edit command.",
@@ -381,11 +430,12 @@ export async function POST(request: NextRequest) {
     const categories = (categoriesRaw || []) as CategoryRow[];
     const counterparties = (counterpartiesRaw || []) as CounterpartyRow[];
     const accounts = (accountsRaw || []) as AccountRow[];
+    const llmPrompt = buildLlmContextualPrompt(messages, selectedTransaction, categories);
 
-    const actionType = inferActionType(prompt, body.actionHint);
+    const actionType = inferActionType(latestUserPrompt, body.actionHint);
 
     if (actionType === "create_rule") {
-      const { result, parsedRule } = await parseCreateRule(prompt, categories);
+      const { result, parsedRule } = await parseCreateRule(llmPrompt, categories);
       console.info("[assistant.chat]", {
         action_type: actionType,
         status: result.status,
@@ -393,7 +443,7 @@ export async function POST(request: NextRequest) {
       });
       if (debugEnabled) {
         result.debug = {
-          contextual_prompt: prompt,
+          contextual_prompt: llmPrompt,
           ...result.debug,
         };
       }
@@ -404,7 +454,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (actionType === "bulk_edit_transactions") {
-      const action = parseBulkEditAction(prompt, selectedTransactionIds, categories);
+      const action = parseBulkEditAction(latestUserPrompt, selectedTransactionIds, categories);
       const response: AssistantChatResult = action
         ? {
             status: "show_review",
@@ -421,7 +471,7 @@ export async function POST(request: NextRequest) {
           };
 
       if (debugEnabled) {
-        response.debug = { contextual_prompt: prompt, parsed_payload: { action_type: actionType } };
+        response.debug = { contextual_prompt: lightweightContextPrompt, parsed_payload: { action_type: actionType } };
       }
       console.info("[assistant.chat]", {
         action_type: actionType,
@@ -436,7 +486,7 @@ export async function POST(request: NextRequest) {
       const parentAmount = Math.abs(typeof (selectedTransaction as { amount?: unknown })?.amount === "number"
         ? ((selectedTransaction as { amount: number }).amount)
         : 0);
-      const lines = parseSplitLines(prompt, categories);
+      const lines = parseSplitLines(latestUserPrompt, categories);
       const total = lines.reduce((sum, line) => sum + line.amount, 0);
       const difference = Number((parentAmount - total).toFixed(2));
 
@@ -471,7 +521,7 @@ export async function POST(request: NextRequest) {
           };
 
       if (debugEnabled) {
-        response.debug = { contextual_prompt: prompt, parsed_payload: { action_type: actionType, lines_count: lines.length } };
+        response.debug = { contextual_prompt: lightweightContextPrompt, parsed_payload: { action_type: actionType, lines_count: lines.length } };
       }
       console.info("[assistant.chat]", {
         action_type: actionType,
@@ -486,7 +536,7 @@ export async function POST(request: NextRequest) {
       const month = typeof body.month === "string" && /^\d{4}-\d{2}$/.test(body.month)
         ? body.month
         : new Date().toISOString().slice(0, 7);
-      const preview = parseExpectedInflow(prompt, month, categories, counterparties);
+      const preview = parseExpectedInflow(latestUserPrompt, month, categories, counterparties);
 
       const response: AssistantChatResult = preview
         ? {
@@ -508,7 +558,7 @@ export async function POST(request: NextRequest) {
           };
 
       if (debugEnabled) {
-        response.debug = { contextual_prompt: prompt, parsed_payload: { action_type: actionType } };
+        response.debug = { contextual_prompt: lightweightContextPrompt, parsed_payload: { action_type: actionType } };
       }
       console.info("[assistant.chat]", {
         action_type: actionType,
@@ -519,7 +569,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response);
     }
 
-    const ownerHint = inferOwner(prompt, null);
+    const ownerHint = inferOwner(latestUserPrompt, null);
     const suggestions = accounts.map((account) => ({
       account_id: account.id,
       provider_name: account.name,
@@ -549,7 +599,7 @@ export async function POST(request: NextRequest) {
     };
 
     if (debugEnabled) {
-      response.debug = { contextual_prompt: prompt, parsed_payload: { action_type: actionType, suggestions: changedSuggestions.length } };
+      response.debug = { contextual_prompt: lightweightContextPrompt, parsed_payload: { action_type: actionType, suggestions: changedSuggestions.length } };
     }
     console.info("[assistant.chat]", {
       action_type: actionType,

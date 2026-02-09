@@ -94,6 +94,7 @@ export function RuleForm({
   const [assistantPrompt, setAssistantPrompt] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
+  const [assistantHistory, setAssistantHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [debugEnabled, setDebugEnabled] = useState(false);
   const [debugEntries, setDebugEntries] = useState<Array<{
     id: string;
@@ -131,12 +132,13 @@ export function RuleForm({
     setAssistantMessage(null);
 
     try {
+      const nextMessages = [...assistantHistory, { role: "user" as const, content: prompt }];
       const response = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           actionHint: "create_rule",
-          messages: [{ role: "user", content: prompt }],
+          messages: nextMessages,
           debug: debugEnabled,
         }),
       });
@@ -148,6 +150,8 @@ export function RuleForm({
       if (parsedRule) {
         applyRuleToForm(parsedRule as ParsedRulePayload);
       }
+      const assistantReply = payload.assistant_message || payload.clarification || payload.error || "No suggestion returned.";
+      setAssistantHistory((prev) => [...prev, { role: "user", content: prompt }, { role: "assistant", content: assistantReply }]);
       if (debugEnabled) {
         setDebugEntries((prev) => [
           ...prev,
@@ -155,7 +159,7 @@ export function RuleForm({
             id: `${Date.now()}-${Math.random()}`,
             request: {
               actionHint: "create_rule",
-              messages: [{ role: "user", content: prompt }],
+              messages: nextMessages,
               debug: true,
             },
             response: payload,
@@ -163,7 +167,7 @@ export function RuleForm({
           },
         ]);
       }
-      setAssistantMessage(payload.assistant_message || payload.clarification || payload.error || "No suggestion returned.");
+      setAssistantMessage(assistantReply);
     } catch {
       setAssistantMessage("Failed to generate rule from prompt.");
     } finally {

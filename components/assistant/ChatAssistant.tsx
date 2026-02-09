@@ -49,6 +49,20 @@ function createMessage(role: "assistant" | "user", content: string): AssistantMe
 
 const INITIAL_MESSAGE = createMessage("assistant", "How can I help?");
 
+function buildToolCallMessages(payload: AssistantResponse): string[] {
+  const messages: string[] = [];
+
+  if (payload.debug?.llm_call) {
+    messages.push(`[tool] parse_rule_with_provider (${payload.debug.llm_call.provider}:${payload.debug.llm_call.model})`);
+  }
+
+  if (payload.action?.type) {
+    messages.push(`[tool] ${payload.action.type}`);
+  }
+
+  return messages;
+}
+
 export function ChatAssistant({
   selectedTransaction,
   title = "Rule Assistant",
@@ -102,6 +116,7 @@ export function ChatAssistant({
         setPreviewRule(null);
         setMessages((prev) => [
           ...prev,
+          createMessage("assistant", "[tool] create_categorization_rule"),
           createMessage("assistant", "Looks good. I added that rule."),
         ]);
         emitBehaviorEvent("assistant_confirm_rule_success");
@@ -156,7 +171,8 @@ export function ChatAssistant({
 
       const payload: AssistantResponse = await response.json();
       const text = payload.assistant_message || payload.error || "I couldn't process that. Please try again.";
-      setMessages((prev) => [...prev, createMessage("assistant", text)]);
+      const toolMessages = buildToolCallMessages(payload).map((content) => createMessage("assistant", content));
+      setMessages((prev) => [...prev, ...toolMessages, createMessage("assistant", text)]);
       emitBehaviorEvent("assistant_response", {
         status: payload.status || "unknown",
         action_type: payload.action?.type || "none",
@@ -266,7 +282,9 @@ export function ChatAssistant({
                   key={message.id}
                   className={`rounded-lg px-3 py-2 text-sm ${
                     message.role === "assistant"
-                      ? "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                      ? message.content.startsWith("[tool]")
+                        ? "bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-200 font-mono text-xs"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
                       : "bg-blue-600 text-white ml-8"
                   }`}
                 >
@@ -325,6 +343,14 @@ export function ChatAssistant({
                 >
                   {confirming ? "Saving..." : "Confirm"}
                 </button>
+              </div>
+            )}
+            {loading && !previewRule && (
+              <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+                <div className="text-xs font-medium text-slate-700 dark:text-slate-300">Generating rule preview...</div>
+                <div className="h-3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                <div className="h-3 w-4/5 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                <div className="h-3 w-2/3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
               </div>
             )}
 

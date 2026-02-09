@@ -37,6 +37,7 @@ export default function AccountsPage() {
   const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
   const [suggestionPreview, setSuggestionPreview] = useState<AssistantAction<"suggest_account_updates"> | null>(null);
   const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(new Set());
+  const [assistantHistory, setAssistantHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [debugEnabled, setDebugEnabled] = useState(false);
   const [debugEntries, setDebugEntries] = useState<Array<{
     id: string;
@@ -118,17 +119,20 @@ export default function AccountsPage() {
     setSelectedSuggestionIds(new Set());
 
     try {
+      const nextMessages = [...assistantHistory, { role: "user" as const, content: prompt }];
       const response = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           actionHint: "suggest_account_updates",
-          messages: [{ role: "user", content: prompt }],
+          messages: nextMessages,
           debug: debugEnabled,
         }),
       });
       const payload = (await response.json()) as AssistantChatResult & { error?: string };
-      setAssistantMessage(payload.assistant_message || payload.error || "No suggestions returned.");
+      const assistantReply = payload.assistant_message || payload.error || "No suggestions returned.";
+      setAssistantMessage(assistantReply);
+      setAssistantHistory((prev) => [...prev, { role: "user", content: prompt }, { role: "assistant", content: assistantReply }]);
       if (debugEnabled) {
         setDebugEntries((prev) => [
           ...prev,
@@ -136,7 +140,7 @@ export default function AccountsPage() {
             id: `${Date.now()}-${Math.random()}`,
             request: {
               actionHint: "suggest_account_updates",
-              messages: [{ role: "user", content: prompt }],
+              messages: nextMessages,
               debug: true,
             },
             response: payload,

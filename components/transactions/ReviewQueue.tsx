@@ -69,6 +69,7 @@ export function ReviewQueue({
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
   const [bulkActionPreview, setBulkActionPreview] = useState<AssistantAction<"bulk_edit_transactions"> | null>(null);
+  const [assistantHistory, setAssistantHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [debugEnabled, setDebugEnabled] = useState(false);
   const [debugEntries, setDebugEntries] = useState<Array<{
     id: string;
@@ -190,18 +191,21 @@ export function ReviewQueue({
     setBulkActionPreview(null);
 
     try {
+      const nextMessages = [...assistantHistory, { role: "user" as const, content: prompt }];
       const response = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           actionHint: "bulk_edit_transactions",
-          messages: [{ role: "user", content: prompt }],
+          messages: nextMessages,
           selectedTransactionIds: Array.from(selectedIds),
           debug: debugEnabled,
         }),
       });
       const payload = (await response.json()) as AssistantChatResult & { error?: string };
-      setAssistantMessage(payload.assistant_message || payload.error || "No preview generated.");
+      const assistantReply = payload.assistant_message || payload.error || "No preview generated.";
+      setAssistantMessage(assistantReply);
+      setAssistantHistory((prev) => [...prev, { role: "user", content: prompt }, { role: "assistant", content: assistantReply }]);
       if (payload.action?.type === "bulk_edit_transactions") {
         setBulkActionPreview(payload.action as AssistantAction<"bulk_edit_transactions">);
       }
@@ -212,7 +216,7 @@ export function ReviewQueue({
             id: `${Date.now()}-${Math.random()}`,
             request: {
               actionHint: "bulk_edit_transactions",
-              messages: [{ role: "user", content: prompt }],
+              messages: nextMessages,
               selectedTransactionIds: Array.from(selectedIds),
               debug: true,
             },

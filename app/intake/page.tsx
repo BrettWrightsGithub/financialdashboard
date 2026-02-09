@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 
 type SourceFilter = "" | "upload" | "csv" | "amazon_extension";
 type StatusFilter = "" | "received" | "parsed" | "matched" | "needs_review" | "ready_to_apply" | "applied" | "error";
 type LinkFilter = "" | "awaiting_card_sync" | "matched_candidate" | "needs_review" | "applied";
 type LinkStatus = "awaiting_card_sync" | "matched_candidate" | "needs_review" | "applied";
+type ReviewAction = "confirm_match" | "reject_match" | "mark_ready_to_apply" | "mark_needs_review";
 
 interface QueueArtifact {
   id: string;
@@ -20,10 +21,22 @@ interface QueueArtifact {
   processed_at?: string | null;
 }
 
+interface QueueLineItem {
+  id?: string;
+  line_index: number;
+  description: string;
+  quantity: number;
+  unit_price: number | null;
+  line_total: number;
+}
+
 interface QueueExtraction {
+  id: string;
   merchant_name: string | null;
   transaction_date: string | null;
+  currency: string | null;
   total_amount: number | null;
+  line_items?: QueueLineItem[];
 }
 
 interface QueueMatch {
@@ -33,6 +46,25 @@ interface QueueMatch {
   match_reason: string | null;
   status: string;
   updated_at: string;
+}
+
+interface QueueExternalOrderItem {
+  id?: string;
+  line_index: number;
+  item_title: string;
+  quantity: number;
+  unit_price: number | null;
+  line_total: number;
+}
+
+interface QueueExternalOrder {
+  id: string;
+  marketplace: string;
+  provider_order_id: string;
+  order_date: string;
+  order_total: number;
+  currency: string;
+  items?: QueueExternalOrderItem[];
 }
 
 interface QueueCsvBatch {
@@ -62,6 +94,7 @@ interface QueueRematchRun {
 interface QueueEntry {
   artifact: QueueArtifact;
   extraction: QueueExtraction | null;
+  external_order?: QueueExternalOrder | null;
   match: QueueMatch | null;
   link_status: LinkStatus | null;
   link_reason: string | null;
@@ -85,7 +118,21 @@ interface RematchResponse {
   rematch: QueueRematchRun;
 }
 
-function formatFileSize(bytes: number | null): string {
+interface IntakeReviewResponse {
+  success: boolean;
+  artifact_id: string;
+  action: ReviewAction;
+}
+
+interface DisplayItem {
+  line_index: number;
+  title: string;
+  quantity: number;
+  unit_price: number | null;
+  line_total: number;
+}
+
+function formatFileSize(bytes: number | null | undefined): string {
   if (!bytes || bytes <= 0) return "n/a";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -96,6 +143,23 @@ function formatDateTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return date.toLocaleString();
+}
+
+function formatMoney(amount: number | null | undefined, currency: string | null | undefined): string {
+  if (amount === null || amount === undefined) {
+    return "n/a";
+  }
+
+  const chosenCurrency = currency && currency.trim().length > 0 ? currency : "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: chosenCurrency,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${chosenCurrency}`;
+  }
 }
 
 function statusBadgeClass(status: string): string {
@@ -139,6 +203,47 @@ function linkStatusBadgeClass(status: LinkStatus): string {
   }
 }
 
+function reviewActionLabel(action: ReviewAction): string {
+  switch (action) {
+    case "confirm_match":
+      return "Match confirmed";
+    case "reject_match":
+      return "Match rejected";
+    case "mark_ready_to_apply":
+      return "Marked ready to apply";
+    case "mark_needs_review":
+      return "Marked as needs review";
+  }
+}
+
+function buildDisplayItems(entry: QueueEntry): DisplayItem[] {
+  if (entry.external_order?.items && entry.external_order.items.length > 0) {
+    return entry.external_order.items
+      .map((item) => ({
+        line_index: item.line_index,
+        title: item.item_title,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        line_total: item.line_total,
+      }))
+      .sort((left, right) => left.line_index - right.line_index);
+  }
+
+  if (entry.extraction?.line_items && entry.extraction.line_items.length > 0) {
+    return entry.extraction.line_items
+      .map((item) => ({
+        line_index: item.line_index,
+        title: item.description,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        line_total: item.line_total,
+      }))
+      .sort((left, right) => left.line_index - right.line_index);
+  }
+
+  return [];
+}
+
 export default function IntakePage() {
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("");
@@ -152,6 +257,10 @@ export default function IntakePage() {
   const [runningRematch, setRunningRematch] = useState(false);
   const [rematchMessage, setRematchMessage] = useState<string | null>(null);
   const [rematchError, setRematchError] = useState<string | null>(null);
+  const [expandedArtifactIds, setExpandedArtifactIds] = useState<string[]>([]);
+  const [activeReviewArtifactId, setActiveReviewArtifactId] = useState<string | null>(null);
+  const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const [uploadingCsv, setUploadingCsv] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
@@ -294,6 +403,47 @@ export default function IntakePage() {
     }
   }
 
+  function toggleArtifactExpanded(artifactId: string) {
+    setExpandedArtifactIds((current) => {
+      if (current.includes(artifactId)) {
+        return current.filter((id) => id !== artifactId);
+      }
+      return [...current, artifactId];
+    });
+  }
+
+  async function runReviewAction(artifactId: string, action: ReviewAction) {
+    setActiveReviewArtifactId(artifactId);
+    setReviewError(null);
+    setReviewMessage(null);
+
+    try {
+      const response = await fetch("/api/intake/review", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          artifact_id: artifactId,
+          action,
+        }),
+      });
+
+      const body = (await response.json()) as IntakeReviewResponse | { error: string };
+      if (!response.ok || !("success" in body)) {
+        throw new Error("error" in body ? body.error : "Failed to update intake review action");
+      }
+
+      setReviewMessage(`${reviewActionLabel(action)} for ${artifactId}.`);
+      await loadQueue("refresh");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update intake review action";
+      setReviewError(message);
+    } finally {
+      setActiveReviewArtifactId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -394,6 +544,18 @@ export default function IntakePage() {
           </p>
         )}
 
+        {reviewMessage && (
+          <p className="text-sm rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-2 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-300">
+            {reviewMessage}
+          </p>
+        )}
+
+        {reviewError && (
+          <p className="text-sm rounded-lg border border-red-200 bg-red-50 text-red-700 px-3 py-2 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
+            {reviewError}
+          </p>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
             <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Source</label>
@@ -463,49 +625,192 @@ export default function IntakePage() {
                   <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">Status</th>
                   <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">Link</th>
                   <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">Details</th>
+                  <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">Review</th>
                   <th className="text-left px-3 py-2 font-medium text-slate-600 dark:text-slate-300">ID</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredQueue.map((entry) => {
+                  const isAmazon = entry.artifact.source_type === "amazon_extension";
+                  const isExpanded = expandedArtifactIds.includes(entry.artifact.id);
+                  const isReviewBusy = activeReviewArtifactId === entry.artifact.id;
+                  const displayItems = buildDisplayItems(entry);
+                  const productPreview = displayItems.slice(0, 2).map((item) => item.title).join("; ");
+                  const currency = entry.external_order?.currency || entry.extraction?.currency || "USD";
                   const detail =
                     entry.artifact.source_type === "csv"
                       ? entry.csv_batch
                         ? `${entry.csv_batch.valid_rows}/${entry.csv_batch.total_rows} valid, ${entry.csv_batch.duplicate_rows} duplicate`
                         : `${entry.artifact.mime_type || "csv"} • ${formatFileSize(entry.artifact.size_bytes)}`
                       : entry.extraction?.merchant_name
-                        ? `${entry.extraction.merchant_name} • ${entry.extraction.total_amount ?? "n/a"}${entry.artifact.provider_order_id ? ` • Order ${entry.artifact.provider_order_id}` : ""}`
+                        ? `${entry.extraction.merchant_name} • ${formatMoney(entry.extraction.total_amount, currency)}${entry.artifact.provider_order_id ? ` • Order ${entry.artifact.provider_order_id}` : ""}${productPreview ? ` • ${productPreview}` : ""}`
                         : `${entry.artifact.mime_type || "upload"} • ${formatFileSize(entry.artifact.size_bytes)}`;
 
                   return (
-                    <tr key={entry.artifact.id} className="border-t border-slate-200 dark:border-slate-700 align-top">
-                      <td className="px-3 py-2 text-slate-700 dark:text-slate-200">{formatDateTime(entry.artifact.received_at)}</td>
-                      <td className="px-3 py-2 text-slate-700 dark:text-slate-200">{entry.artifact.source_type}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadgeClass(entry.artifact.status)}`}>
-                          {entry.artifact.status}
-                        </span>
-                        {entry.artifact.error_message && (
-                          <p className="text-xs text-red-600 dark:text-red-300 mt-1">{entry.artifact.error_message}</p>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {entry.link_status ? (
-                          <div className="space-y-1">
-                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${linkStatusBadgeClass(entry.link_status)}`}>
-                              {linkStatusLabel(entry.link_status)}
-                            </span>
-                            {entry.link_reason && (
-                              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm">{entry.link_reason}</p>
+                    <Fragment key={entry.artifact.id}>
+                      <tr className="border-t border-slate-200 dark:border-slate-700 align-top">
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-200">{formatDateTime(entry.artifact.received_at)}</td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-200">{entry.artifact.source_type}</td>
+                        <td className="px-3 py-2">
+                          <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadgeClass(entry.artifact.status)}`}>
+                            {entry.artifact.status}
+                          </span>
+                          {entry.artifact.error_message && (
+                            <p className="text-xs text-red-600 dark:text-red-300 mt-1">{entry.artifact.error_message}</p>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          {entry.link_status ? (
+                            <div className="space-y-1">
+                              <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${linkStatusBadgeClass(entry.link_status)}`}>
+                                {linkStatusLabel(entry.link_status)}
+                              </span>
+                              {entry.link_reason && (
+                                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm">{entry.link_reason}</p>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400 dark:text-slate-500">-</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-200">{detail}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => toggleArtifactExpanded(entry.artifact.id)}
+                              className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                            >
+                              {isExpanded ? "Hide" : "Review"}
+                            </button>
+                            {isAmazon && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => void runReviewAction(entry.artifact.id, "confirm_match")}
+                                  disabled={!entry.match?.transaction_id || isReviewBusy}
+                                  className="rounded-md border border-emerald-700 bg-emerald-700 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Confirm
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void runReviewAction(entry.artifact.id, "mark_needs_review")}
+                                  disabled={isReviewBusy}
+                                  className="rounded-md border border-amber-600 px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:border-amber-500 dark:hover:bg-amber-900/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Needs Review
+                                </button>
+                              </>
                             )}
                           </div>
-                        ) : (
-                          <span className="text-xs text-slate-400 dark:text-slate-500">-</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-slate-700 dark:text-slate-200">{detail}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400">{entry.artifact.id}</td>
-                    </tr>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400">{entry.artifact.id}</td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr className="border-t border-slate-100 bg-slate-50/70 dark:bg-slate-900/30 dark:border-slate-700">
+                          <td colSpan={7} className="px-4 py-4">
+                            <div className="space-y-4">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/50">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Order Summary</p>
+                                  <div className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-200">
+                                    <p>Merchant: {entry.extraction?.merchant_name || "Unknown"}</p>
+                                    <p>Order Date: {entry.extraction?.transaction_date || "n/a"}</p>
+                                    <p>Total: {formatMoney(entry.extraction?.total_amount, currency)}</p>
+                                    <p>Order ID: {entry.artifact.provider_order_id || entry.external_order?.provider_order_id || "n/a"}</p>
+                                  </div>
+                                </div>
+
+                                <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/50">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Match Review</p>
+                                  <div className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-200">
+                                    <p>Transaction ID: {entry.match?.transaction_id || "Not linked"}</p>
+                                    <p>
+                                      Confidence: {entry.match?.match_confidence !== null && entry.match?.match_confidence !== undefined
+                                        ? `${Math.round(entry.match.match_confidence * 100)}%`
+                                        : "n/a"}
+                                    </p>
+                                    <p>Status: {entry.match?.status || "none"}</p>
+                                    <p>Reason: {entry.link_reason || entry.match?.match_reason || "n/a"}</p>
+                                  </div>
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => void runReviewAction(entry.artifact.id, "confirm_match")}
+                                      disabled={!entry.match?.transaction_id || isReviewBusy}
+                                      className="rounded-md border border-emerald-700 bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Confirm Match
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void runReviewAction(entry.artifact.id, "reject_match")}
+                                      disabled={isReviewBusy}
+                                      className="rounded-md border border-red-600 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 dark:text-red-300 dark:border-red-500 dark:hover:bg-red-900/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Reject Match
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void runReviewAction(entry.artifact.id, "mark_ready_to_apply")}
+                                      disabled={isReviewBusy}
+                                      className="rounded-md border border-blue-700 bg-blue-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Mark Ready to Apply
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void runReviewAction(entry.artifact.id, "mark_needs_review")}
+                                      disabled={isReviewBusy}
+                                      className="rounded-md border border-amber-600 px-2.5 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:border-amber-500 dark:hover:bg-amber-900/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Keep in Review
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/50">
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Order Items</p>
+                                  <span className="text-xs text-slate-500 dark:text-slate-400">{displayItems.length} item(s)</span>
+                                </div>
+                                {displayItems.length === 0 ? (
+                                  <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">No product line items parsed for this order yet.</p>
+                                ) : (
+                                  <div className="mt-2 overflow-x-auto rounded-md border border-slate-200 dark:border-slate-700">
+                                    <table className="min-w-full text-xs">
+                                      <thead className="bg-slate-100 dark:bg-slate-800">
+                                        <tr>
+                                          <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">#</th>
+                                          <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Product</th>
+                                          <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Qty</th>
+                                          <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Unit</th>
+                                          <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Total</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {displayItems.map((item) => (
+                                          <tr key={`${entry.artifact.id}-item-${item.line_index}`} className="border-t border-slate-200 dark:border-slate-700">
+                                            <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">{item.line_index + 1}</td>
+                                            <td className="px-2 py-1.5 text-slate-700 dark:text-slate-200">{item.title || "Untitled item"}</td>
+                                            <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">{item.quantity}</td>
+                                            <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">{formatMoney(item.unit_price, currency)}</td>
+                                            <td className="px-2 py-1.5 text-slate-700 dark:text-slate-200">{formatMoney(item.line_total, currency)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>

@@ -93,7 +93,23 @@ function isMissingRelationError(error: unknown): boolean {
   const err = error as Record<string, unknown>;
   const code = typeof err.code === "string" ? err.code : "";
   const message = typeof err.message === "string" ? err.message.toLowerCase() : "";
-  return code === "42P01" || message.includes("does not exist") || message.includes("relation");
+  return (
+    code === "42P01" ||
+    code === "PGRST204" ||
+    code === "PGRST205" ||
+    message.includes("does not exist") ||
+    message.includes("relation") ||
+    message.includes("could not find the table") ||
+    message.includes("schema cache")
+  );
+}
+
+function isMissingColumnError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as Record<string, unknown>;
+  const code = typeof err.code === "string" ? err.code : "";
+  const message = typeof err.message === "string" ? err.message.toLowerCase() : "";
+  return code === "42703" || (message.includes("column") && message.includes("does not exist"));
 }
 
 async function countRows(
@@ -101,7 +117,7 @@ async function countRows(
   apply?: (query: any) => any
 ): Promise<number> {
   const supabase = createServerSupabaseClient();
-  let query = supabase.from(table).select("id", { head: true, count: "exact" });
+  let query = supabase.from(table).select("*", { head: true, count: "exact" });
   if (apply) query = apply(query);
   const { count, error } = await query;
   if (error) throw error;
@@ -126,9 +142,9 @@ export async function getAdminMetrics(windowDays = 7): Promise<AdminMetricsRepor
     .limit(10000);
 
   if (eventsError) {
-    if (isMissingRelationError(eventsError)) {
+    if (isMissingRelationError(eventsError) || isMissingColumnError(eventsError)) {
       telemetryConfigured = false;
-      warnings.push("Telemetry table not found. Apply migration 20260208_admin_telemetry_dashboard.sql.");
+      warnings.push("Telemetry schema not found or outdated. Apply migration 20260208_admin_telemetry_dashboard.sql.");
     } else {
       throw eventsError;
     }
@@ -190,6 +206,22 @@ export async function getAdminMetrics(windowDays = 7): Promise<AdminMetricsRepor
   const now = new Date();
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 
+  async function safeCountRows(
+    table: string,
+    metricLabel: string,
+    apply?: (query: any) => any
+  ): Promise<number> {
+    try {
+      return await countRows(table, apply);
+    } catch (error) {
+      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        warnings.push(`${metricLabel} unavailable. Table or column is missing in ${table}.`);
+        return 0;
+      }
+      throw error;
+    }
+  }
+
   const [
     transactionsTotal,
     uncategorizedTransactions,
@@ -197,17 +229,19 @@ export async function getAdminMetrics(windowDays = 7): Promise<AdminMetricsRepor
     expectedInflowsPendingThisMonth,
     splitParents,
   ] = await Promise.all([
-    countRows("transactions"),
-    countRows("transactions", (query) =>
+    safeCountRows("transactions", "Total transactions"),
+    safeCountRows("transactions", "Uncategorized transactions", (query) =>
       query
         .eq("status", "posted")
         .is("life_category_id", null)
         .eq("is_transfer", false)
         .eq("is_split_parent", false)
     ),
-    countRows("categorization_rules", (query) => query.eq("is_active", true)),
-    countRows("expected_inflows", (query) => query.eq("status", "pending").eq("month", month)),
-    countRows("transactions", (query) => query.eq("is_split_parent", true)),
+    safeCountRows("categorization_rules", "Active rules", (query) => query.eq("is_active", true)),
+    safeCountRows("expected_inflows", "Expected inflows pending this month", (query) =>
+      query.eq("status", "pending").eq("month", month)
+    ),
+    safeCountRows("transactions", "Split parent transactions", (query) => query.eq("is_split_parent", true)),
   ]);
 
   let intakeNeedsReview: number | null = null;
@@ -216,8 +250,8 @@ export async function getAdminMetrics(windowDays = 7): Promise<AdminMetricsRepor
       query.in("status", ["needs_review", "error"])
     );
   } catch (error) {
-    if (!isMissingRelationError(error)) throw error;
-    warnings.push("Intake tables not found. Intake metrics are unavailable.");
+    if (!isMissingRelationError(error) && !isMissingColumnError(error)) throw error;
+    warnings.push("Intake schema not found or outdated. Intake metrics are unavailable.");
   }
 
   return {

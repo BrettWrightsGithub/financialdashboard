@@ -6,12 +6,20 @@ import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: "🏠" },
+  { href: "/intake", label: "Intake", icon: "📥" },
   { href: "/transactions", label: "Transactions", icon: "💳" },
   { href: "/accounts", label: "Accounts", icon: "🏦" },
   { href: "/budget-planner", label: "Budget", icon: "📊" },
   { href: "/admin/rules", label: "Rules", icon: "🧠" },
   { href: "/admin", label: "Admin", icon: "⚙️" },
 ];
+
+const AMAZON_EXTENSION_URL =
+  process.env.NEXT_PUBLIC_AMAZON_EXTENSION_URL?.trim() || "https://chromewebstore.google.com/";
+
+const HAS_CONFIGURED_EXTENSION_URL = Boolean(
+  process.env.NEXT_PUBLIC_AMAZON_EXTENSION_URL?.trim()
+);
 
 interface SidebarProps {
   mobileOpen?: boolean;
@@ -100,6 +108,27 @@ export function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarProps) {
             );
           })}
         </nav>
+
+        <div className="px-2 pt-2 mt-1 border-t border-slate-800">
+          <a
+            href={AMAZON_EXTENSION_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onCloseMobile}
+            className="group block rounded-xl px-3 py-2.5 min-h-[44px] bg-gradient-to-r from-amber-300 via-orange-300 to-rose-300 text-slate-900 hover:from-amber-200 hover:via-orange-200 hover:to-rose-200 transition-all duration-200 shadow-[0_10px_24px_-14px_rgba(251,146,60,0.9)]"
+            title={!expanded ? "Get Extension" : undefined}
+          >
+            <span className="inline-flex items-center gap-2 text-sm font-semibold">
+              <span aria-hidden>🧩</span>
+              {expanded && <span>Get Extension</span>}
+            </span>
+            {expanded && (
+              <span className="mt-1 block text-[11px] font-medium text-slate-700/90">
+                {HAS_CONFIGURED_EXTENSION_URL ? "Install from Chrome Web Store" : "Install link pending"}
+              </span>
+            )}
+          </a>
+        </div>
       </aside>
     </>
   );

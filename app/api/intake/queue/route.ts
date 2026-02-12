@@ -50,6 +50,9 @@ interface IntakeLineItemRow {
   quantity: number;
   unit_price: number | null;
   line_total: number;
+  suggested_category_id: string | null;
+  confirmed_category_id: string | null;
+  raw_item_json: Record<string, unknown> | null;
 }
 
 interface ExternalOrderRow {
@@ -70,6 +73,7 @@ interface ExternalOrderItemRow {
   quantity: number;
   unit_price: number | null;
   line_total: number;
+  raw_item_json: Record<string, unknown> | null;
 }
 
 interface CsvImportBatchRow {
@@ -174,6 +178,8 @@ export async function GET(request: NextRequest) {
 
     if (status) {
       artifactsQuery = artifactsQuery.eq("status", status);
+    } else {
+      artifactsQuery = artifactsQuery.neq("status", "applied");
     }
 
     const { data: artifacts, count, error: artifactError } = await artifactsQuery;
@@ -218,7 +224,9 @@ export async function GET(request: NextRequest) {
 
         const { data: lineItems, error: lineItemError } = await supabase
           .from("intake_line_items")
-          .select("id, extraction_id, line_index, description, quantity, unit_price, line_total")
+          .select(
+            "id, extraction_id, line_index, description, quantity, unit_price, line_total, suggested_category_id, confirmed_category_id, raw_item_json"
+          )
           .in("extraction_id", extractionIds)
           .order("line_index", { ascending: true });
 
@@ -244,7 +252,7 @@ export async function GET(request: NextRequest) {
       if (externalOrderIds.length > 0) {
         const { data: externalOrderItems, error: externalOrderItemError } = await supabase
           .from("external_order_items")
-          .select("id, external_order_id, line_index, item_title, quantity, unit_price, line_total")
+          .select("id, external_order_id, line_index, item_title, quantity, unit_price, line_total, raw_item_json")
           .in("external_order_id", externalOrderIds)
           .order("line_index", { ascending: true });
 

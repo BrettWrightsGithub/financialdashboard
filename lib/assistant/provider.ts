@@ -264,48 +264,42 @@ export async function parseRuleWithProvider(
 
   if (provider === "openai") {
     if (!openAiKey) {
-      return {
-        rule: null,
-        response: "LLM provider is set to OpenAI but OPENAI_API_KEY is not configured.",
-        debug: {
-          llm_call: {
-            provider: "openai",
-            endpoint: "https://api.openai.com/v1/chat/completions",
-            model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-            request: {
-              system_prompt: SYSTEM_PROMPT,
-              user_message: message,
-            },
-            error: "OPENAI_API_KEY is not configured",
-          },
+      llmCallDebug = {
+        provider: "openai",
+        endpoint: "https://api.openai.com/v1/chat/completions",
+        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        request: {
+          system_prompt: SYSTEM_PROMPT,
+          user_message: message,
         },
+        error: "OPENAI_API_KEY is not configured",
       };
+      fallbackReason = "OPENAI_API_KEY is not configured";
     }
-    const llmResult = await callOpenAI({ message, provider, apiKey: openAiKey });
-    parsed = llmResult.parsed;
-    llmCallDebug = llmResult.debug;
+    if (openAiKey) {
+      const llmResult = await callOpenAI({ message, provider, apiKey: openAiKey });
+      parsed = llmResult.parsed;
+      llmCallDebug = llmResult.debug;
+    }
   } else {
     if (!anthropicKey) {
-      return {
-        rule: null,
-        response: "LLM provider is set to Anthropic but ANTHROPIC_API_KEY is not configured.",
-        debug: {
-          llm_call: {
-            provider: "anthropic",
-            endpoint: "https://api.anthropic.com/v1/messages",
-            model: process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-latest",
-            request: {
-              system_prompt: SYSTEM_PROMPT,
-              user_message: message,
-            },
-            error: "ANTHROPIC_API_KEY is not configured",
-          },
+      llmCallDebug = {
+        provider: "anthropic",
+        endpoint: "https://api.anthropic.com/v1/messages",
+        model: process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-latest",
+        request: {
+          system_prompt: SYSTEM_PROMPT,
+          user_message: message,
         },
+        error: "ANTHROPIC_API_KEY is not configured",
       };
+      fallbackReason = "ANTHROPIC_API_KEY is not configured";
     }
-    const llmResult = await callAnthropic({ message, provider, apiKey: anthropicKey });
-    parsed = llmResult.parsed;
-    llmCallDebug = llmResult.debug;
+    if (anthropicKey) {
+      const llmResult = await callAnthropic({ message, provider, apiKey: anthropicKey });
+      parsed = llmResult.parsed;
+      llmCallDebug = llmResult.debug;
+    }
   }
 
   const usedRegexFallback = !parsed;

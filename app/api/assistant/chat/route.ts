@@ -137,10 +137,16 @@ function inferActionType(prompt: string, requested: AssistantChatRequest["action
   if (requested && requested !== "auto") return requested;
 
   const lower = prompt.toLowerCase();
+  const hasRuleIntent =
+    /\brule\b/.test(lower) ||
+    /\bcategori(?:ze|se|zation|sation)\b/.test(lower) ||
+    /\bcategory\b/.test(lower);
+
   if (lower.includes("split") || lower.includes("receipt")) return "propose_split";
-  if (lower.includes("inflow") || lower.includes("rent") || lower.includes("due")) return "create_expected_inflow";
-  if (lower.includes("account") || lower.includes("rename") || lower.includes("owner")) return "suggest_account_updates";
   if (lower.includes("selected") || lower.includes("mark") || lower.includes("bulk")) return "bulk_edit_transactions";
+  if (lower.includes("account") || lower.includes("rename") || lower.includes("owner")) return "suggest_account_updates";
+  if (hasRuleIntent) return "create_rule";
+  if (lower.includes("inflow") || lower.includes("rent") || lower.includes("due")) return "create_expected_inflow";
   return "create_rule";
 }
 

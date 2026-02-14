@@ -29,6 +29,7 @@ function shortInstallId(value) {
 function setRunningState(running) {
   byId("syncNow").disabled = running;
   byId("syncNow").textContent = running ? "Syncing..." : "Sync Now";
+  byId("resetCursor").disabled = running;
 }
 
 function renderStatus(payload) {
@@ -104,6 +105,27 @@ async function runSync() {
   }
 }
 
+async function resetSyncCursor() {
+  const confirmed = window.confirm(
+    "Reset local sync cursor and token? Use this after clearing Amazon intake so the next sync backfills from the beginning."
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const response = await sendMessage({
+      type: "RESET_SYNC_CURSOR",
+      clearToken: true,
+    });
+    renderStatus(response);
+    byId("statusText").textContent = "Cursor reset. Run Sync Now to backfill orders.";
+  } catch (error) {
+    byId("statusText").textContent = `Reset failed: ${error.message}`;
+  }
+}
+
 async function openIntake() {
   const response = await refreshStatus();
   const base = String(response?.settings?.apiBaseUrl || "http://localhost:3002").replace(/\/$/, "");
@@ -114,6 +136,7 @@ async function openIntake() {
 
 async function init() {
   byId("syncNow").addEventListener("click", runSync);
+  byId("resetCursor").addEventListener("click", resetSyncCursor);
 
   byId("openOrders").addEventListener("click", () => {
     chrome.tabs.create({ url: AMAZON_ORDER_HISTORY_URL });

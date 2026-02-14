@@ -11,7 +11,13 @@ export interface IntakeUploadFileLike {
 }
 
 const CSV_MIME_TYPES = new Set(["text/csv", "application/csv", "application/vnd.ms-excel"]);
-const RECEIPT_MIME_TYPES = new Set(["application/pdf"]);
+const RECEIPT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/heic",
+  "image/heif",
+  "image/heic-sequence",
+  "image/heif-sequence",
+]);
 
 export function sanitizeFilename(filename: string): string {
   const cleaned = filename
@@ -46,7 +52,15 @@ function looksLikeReceipt(filename: string, mimeType: string): boolean {
   }
 
   const lowered = filename.toLowerCase();
-  return lowered.endsWith(".pdf") || lowered.endsWith(".jpg") || lowered.endsWith(".jpeg") || lowered.endsWith(".png");
+  return (
+    lowered.endsWith(".pdf") ||
+    lowered.endsWith(".jpg") ||
+    lowered.endsWith(".jpeg") ||
+    lowered.endsWith(".png") ||
+    lowered.endsWith(".webp") ||
+    lowered.endsWith(".heic") ||
+    lowered.endsWith(".heif")
+  );
 }
 
 export function parseRequestedSourceType(value: FormDataEntryValue | null): IntakeUploadSourceType | null {

@@ -1,17 +1,24 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createServer } from "http";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-// Mock Supabase client
-const mockSupabase = {
-  from: vi.fn(() => mockSupabase),
-  select: vi.fn(() => mockSupabase),
-  eq: vi.fn(() => mockSupabase),
-  order: vi.fn(() => mockSupabase),
-  upsert: vi.fn(() => mockSupabase),
-  delete: vi.fn(() => mockSupabase),
-  single: vi.fn(() => mockSupabase),
-};
+const { mockSupabase } = vi.hoisted(() => {
+  const mockSupabase: any = {
+    from: vi.fn(),
+    select: vi.fn(),
+    eq: vi.fn(),
+    order: vi.fn(),
+    upsert: vi.fn(),
+    delete: vi.fn(),
+    single: vi.fn(),
+  };
+  mockSupabase.from.mockImplementation(() => mockSupabase);
+  mockSupabase.select.mockImplementation(() => mockSupabase);
+  mockSupabase.eq.mockImplementation(() => mockSupabase);
+  mockSupabase.order.mockImplementation(() => mockSupabase);
+  mockSupabase.upsert.mockImplementation(() => mockSupabase);
+  mockSupabase.delete.mockImplementation(() => mockSupabase);
+  return { mockSupabase };
+});
 
 vi.mock("@/lib/supabase", () => ({
   supabase: mockSupabase,
@@ -23,6 +30,12 @@ import { GET, POST, DELETE } from "./route";
 describe("/api/budget-targets", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSupabase.from.mockImplementation(() => mockSupabase);
+    mockSupabase.select.mockImplementation(() => mockSupabase);
+    mockSupabase.eq.mockImplementation(() => mockSupabase);
+    mockSupabase.order.mockImplementation(() => mockSupabase);
+    mockSupabase.upsert.mockImplementation(() => mockSupabase);
+    mockSupabase.delete.mockImplementation(() => mockSupabase);
   });
 
   describe("GET", () => {
@@ -38,7 +51,7 @@ describe("/api/budget-targets", () => {
         },
       ];
 
-      mockSupabase.select.mockResolvedValue({
+      mockSupabase.order.mockResolvedValue({
         data: mockData,
         error: null,
       });
@@ -59,11 +72,11 @@ describe("/api/budget-targets", () => {
       const data = await response.json();
 
       expect(response.status).toBe(400);
-      expect(data).toEqual({ error: "Month parameter is required" });
+      expect(data).toEqual({ error: "Month parameter is required (format: YYYY-MM)" });
     });
 
     it("handles database errors", async () => {
-      mockSupabase.select.mockResolvedValue({
+      mockSupabase.order.mockResolvedValue({
         data: null,
         error: { message: "Database error" },
       });
@@ -88,7 +101,7 @@ describe("/api/budget-targets", () => {
         created_at: "2025-01-01T00:00:00Z",
       };
 
-      mockSupabase.upsert.mockResolvedValue({
+      mockSupabase.single.mockResolvedValue({
         data: mockData,
         error: null,
       });
@@ -155,11 +168,11 @@ describe("/api/budget-targets", () => {
       const data = await response.json();
 
       expect(response.status).toBe(400);
-      expect(data.error).toContain("Amount must be a number");
+      expect(data.error).toContain("Amount must be a valid number");
     });
 
     it("handles database errors on create", async () => {
-      mockSupabase.upsert.mockResolvedValue({
+      mockSupabase.single.mockResolvedValue({
         data: null,
         error: { message: "Database error" },
       });
@@ -179,17 +192,17 @@ describe("/api/budget-targets", () => {
       const data = await response.json();
 
       expect(response.status).toBe(500);
-      expect(data).toEqual({ error: "Failed to create/update budget target" });
+      expect(data).toEqual({ error: "Failed to save budget target" });
     });
   });
 
   describe("DELETE", () => {
     it("deletes a budget target", async () => {
-      mockSupabase.delete.mockResolvedValue({
+      mockSupabase.eq.mockResolvedValueOnce({
         error: null,
       });
 
-      const request = new NextRequest("http://localhost:3000/api/budget-targets?id=target-1", {
+      const request = new NextRequest("http://localhost:3000/api/budget-targets?id=550e8400-e29b-41d4-a716-446655440000", {
         method: "DELETE",
       });
 
@@ -199,7 +212,7 @@ describe("/api/budget-targets", () => {
       expect(response.status).toBe(200);
       expect(data).toEqual({ success: true });
       expect(mockSupabase.delete).toHaveBeenCalled();
-      expect(mockSupabase.eq).toHaveBeenCalledWith("id", "target-1");
+      expect(mockSupabase.eq).toHaveBeenCalledWith("id", "550e8400-e29b-41d4-a716-446655440000");
     });
 
     it("handles missing id parameter", async () => {
@@ -215,11 +228,11 @@ describe("/api/budget-targets", () => {
     });
 
     it("handles database errors on delete", async () => {
-      mockSupabase.delete.mockResolvedValue({
+      mockSupabase.eq.mockResolvedValueOnce({
         error: { message: "Database error" },
       });
 
-      const request = new NextRequest("http://localhost:3000/api/budget-targets?id=target-1", {
+      const request = new NextRequest("http://localhost:3000/api/budget-targets?id=550e8400-e29b-41d4-a716-446655440000", {
         method: "DELETE",
       });
 

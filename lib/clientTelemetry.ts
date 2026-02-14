@@ -2,13 +2,24 @@ const SESSION_STORAGE_KEY = "app_telemetry_session_id";
 
 function ensureSessionId(): string | null {
   if (typeof window === "undefined") return null;
+  if (
+    !window.localStorage ||
+    typeof window.localStorage.getItem !== "function" ||
+    typeof window.localStorage.setItem !== "function"
+  ) {
+    return null;
+  }
   const existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
   if (existing) return existing;
   const created =
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  window.localStorage.setItem(SESSION_STORAGE_KEY, created);
+  try {
+    window.localStorage.setItem(SESSION_STORAGE_KEY, created);
+  } catch {
+    return null;
+  }
   return created;
 }
 

@@ -49,6 +49,16 @@ describe("intake upload helpers", () => {
     ).toThrow("Unsupported file type");
   });
 
+  it("treats heic files as receipt uploads", () => {
+    expect(
+      resolveIntakeUploadSourceType({
+        requestedSourceType: null,
+        filename: "IMG_0001.HEIC",
+        mimeType: "application/octet-stream",
+      })
+    ).toBe("upload");
+  });
+
   it("builds stable storage paths when id and timestamp are provided", () => {
     const path = buildIntakeStoragePath({
       sourceType: "upload",

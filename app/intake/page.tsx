@@ -7,6 +7,7 @@ type StatusFilter = "" | "received" | "parsed" | "matched" | "needs_review" | "r
 type LinkFilter = "" | "awaiting_card_sync" | "matched_candidate" | "needs_review" | "applied";
 type LinkStatus = "awaiting_card_sync" | "matched_candidate" | "needs_review" | "applied";
 type ReviewAction = "confirm_match" | "reject_match" | "mark_ready_to_apply" | "mark_needs_review";
+type ReceiptExtractionMode = "ocr" | "google_model";
 
 interface QueueArtifact {
   id: string;
@@ -28,6 +29,9 @@ interface QueueLineItem {
   quantity: number;
   unit_price: number | null;
   line_total: number;
+  suggested_category_id?: string | null;
+  confirmed_category_id?: string | null;
+  raw_item_json?: Record<string, unknown> | null;
 }
 
 interface QueueExtraction {
@@ -55,6 +59,7 @@ interface QueueExternalOrderItem {
   quantity: number;
   unit_price: number | null;
   line_total: number;
+  raw_item_json?: Record<string, unknown> | null;
 }
 
 interface QueueExternalOrder {
@@ -118,10 +123,59 @@ interface RematchResponse {
   rematch: QueueRematchRun;
 }
 
+interface ResetAmazonResponse {
+  success: boolean;
+  deleted: {
+    artifacts: number;
+    rematch_runs: number;
+    tokens: number;
+  };
+  remaining_amazon_artifacts: number;
+}
+
 interface IntakeReviewResponse {
   success: boolean;
   artifact_id: string;
   action: ReviewAction;
+}
+
+interface CategoriesResponse {
+  categories?: Array<{ id: string; name: string }>;
+  error?: string;
+}
+
+interface LineItemsSaveResponse {
+  success?: boolean;
+  status?: string;
+  transactions_created?: number;
+  error?: string;
+  totals?: {
+    expected_total: number | null;
+    line_total: number;
+    tax_amount?: number;
+    shipping_amount?: number;
+    line_plus_tax_shipping_total?: number;
+    line_difference?: number | null;
+    adjusted_difference?: number | null;
+    difference: number | null;
+  };
+}
+
+interface EditableLineItem {
+  line_index: number;
+  name: string;
+  description: string;
+  quantity: string;
+  unit_price: string;
+  line_total: string;
+  suggested_category_id: string;
+  confirmed_category_id: string;
+  category_confidence: string;
+}
+
+interface CategoryOption {
+  id: string;
+  name: string;
 }
 
 interface DisplayItem {
@@ -130,6 +184,124 @@ interface DisplayItem {
   quantity: number;
   unit_price: number | null;
   line_total: number;
+  suggested_category_name: string | null;
+  category_confidence: number | null;
+  product_url: string | null;
+  asin: string | null;
+  source: string | null;
+}
+
+const INTAKE_USER_SCOPE_KEY = "intake_user_scope_id";
+
+function readRawNumber(raw: Record<string, unknown> | null | undefined, key: string): number | null {
+  if (!raw) {
+    return null;
+  }
+  const value = raw[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function numberToInput(value: number | null | undefined, decimals: number = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "";
+  }
+  return value.toFixed(decimals);
+}
+
+function ensureIntakeUserScopeId(): string {
+  if (typeof window === "undefined") {
+    return "anonymous";
+  }
+
+  const existing = window.localStorage.getItem(INTAKE_USER_SCOPE_KEY);
+  if (existing && existing.trim().length > 0) {
+    return existing;
+  }
+
+  const generated =
+    typeof window.crypto !== "undefined" && typeof window.crypto.randomUUID === "function"
+      ? window.crypto.randomUUID()
+      : `intake-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  window.localStorage.setItem(INTAKE_USER_SCOPE_KEY, generated);
+  return generated;
+}
+
+function looksLikeReceiptImage(file: File): boolean {
+  if (file.type.toLowerCase().startsWith("image/")) {
+    return true;
+  }
+  const lowered = file.name.toLowerCase();
+  return lowered.endsWith(".heic") || lowered.endsWith(".heif");
+}
+
+async function fileToObjectUrl(file: File): Promise<string> {
+  return URL.createObjectURL(file);
+}
+
+async function downscaleReceiptImage(file: File): Promise<{ file: File; originalSize: number; wasCompressed: boolean }> {
+  if (!looksLikeReceiptImage(file)) {
+    return { file, originalSize: file.size, wasCompressed: false };
+  }
+
+  if (file.size <= 3 * 1024 * 1024) {
+    return { file, originalSize: file.size, wasCompressed: false };
+  }
+
+  const objectUrl = await fileToObjectUrl(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Could not load image"));
+      img.src = objectUrl;
+    });
+
+    const maxDimension = 2200;
+    const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+    const targetWidth = Math.max(1, Math.round(image.width * scale));
+    const targetHeight = Math.max(1, Math.round(image.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return { file, originalSize: file.size, wasCompressed: false };
+    }
+
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/jpeg", 0.82);
+    });
+
+    if (!blob || blob.size >= file.size) {
+      return { file, originalSize: file.size, wasCompressed: false };
+    }
+
+    const fileBaseName = file.name.replace(/\.[^.]+$/, "");
+    const compressed = new File([blob], `${fileBaseName}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+
+    return {
+      file: compressed,
+      originalSize: file.size,
+      wasCompressed: true,
+    };
+  } catch {
+    return { file, originalSize: file.size, wasCompressed: false };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function formatFileSize(bytes: number | null | undefined): string {
@@ -216,6 +388,18 @@ function reviewActionLabel(action: ReviewAction): string {
   }
 }
 
+function readRawString(raw: Record<string, unknown> | null | undefined, key: string): string | null {
+  if (!raw) {
+    return null;
+  }
+  const value = raw[key];
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function buildDisplayItems(entry: QueueEntry): DisplayItem[] {
   if (entry.external_order?.items && entry.external_order.items.length > 0) {
     return entry.external_order.items
@@ -225,6 +409,11 @@ function buildDisplayItems(entry: QueueEntry): DisplayItem[] {
         quantity: item.quantity,
         unit_price: item.unit_price,
         line_total: item.line_total,
+        suggested_category_name: null,
+        category_confidence: null,
+        product_url: readRawString(item.raw_item_json, "product_url"),
+        asin: readRawString(item.raw_item_json, "asin"),
+        source: readRawString(item.raw_item_json, "source"),
       }))
       .sort((left, right) => left.line_index - right.line_index);
   }
@@ -233,10 +422,15 @@ function buildDisplayItems(entry: QueueEntry): DisplayItem[] {
     return entry.extraction.line_items
       .map((item) => ({
         line_index: item.line_index,
-        title: item.description,
+        title: readRawString(item.raw_item_json, "name") || item.description,
         quantity: item.quantity,
         unit_price: item.unit_price,
         line_total: item.line_total,
+        suggested_category_name: readRawString(item.raw_item_json, "suggested_category_name"),
+        category_confidence: readRawNumber(item.raw_item_json, "category_confidence"),
+        product_url: readRawString(item.raw_item_json, "product_url"),
+        asin: readRawString(item.raw_item_json, "asin"),
+        source: readRawString(item.raw_item_json, "source"),
       }))
       .sort((left, right) => left.line_index - right.line_index);
   }
@@ -244,11 +438,47 @@ function buildDisplayItems(entry: QueueEntry): DisplayItem[] {
   return [];
 }
 
+function buildEditableLineItems(entry: QueueEntry): EditableLineItem[] {
+  const items = entry.extraction?.line_items || [];
+  if (!items.length) {
+    return [
+      {
+        line_index: 0,
+        name: "",
+        description: "",
+        quantity: "1.000",
+        unit_price: "",
+        line_total: "",
+        suggested_category_id: "",
+        confirmed_category_id: "",
+        category_confidence: "",
+      },
+    ];
+  }
+
+  return items
+    .slice()
+    .sort((left, right) => left.line_index - right.line_index)
+    .map((item, index) => ({
+      line_index: index,
+      name: readRawString(item.raw_item_json, "name") || "",
+      description: item.description || "",
+      quantity: numberToInput(item.quantity, 3),
+      unit_price: numberToInput(item.unit_price, 2),
+      line_total: numberToInput(item.line_total, 2),
+      suggested_category_id: item.suggested_category_id || "",
+      confirmed_category_id: item.confirmed_category_id || "",
+      category_confidence: numberToInput(readRawNumber(item.raw_item_json, "category_confidence"), 3),
+    }));
+}
+
 export default function IntakePage() {
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
   const [linkFilter, setLinkFilter] = useState<LinkFilter>("");
+  const [receiptExtractionMode, setReceiptExtractionMode] = useState<ReceiptExtractionMode>("google_model");
+  const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
   const [loadingQueue, setLoadingQueue] = useState(true);
   const [refreshingQueue, setRefreshingQueue] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
@@ -257,6 +487,9 @@ export default function IntakePage() {
   const [runningRematch, setRunningRematch] = useState(false);
   const [rematchMessage, setRematchMessage] = useState<string | null>(null);
   const [rematchError, setRematchError] = useState<string | null>(null);
+  const [resettingAmazon, setResettingAmazon] = useState(false);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
   const [expandedArtifactIds, setExpandedArtifactIds] = useState<string[]>([]);
   const [activeReviewArtifactId, setActiveReviewArtifactId] = useState<string | null>(null);
   const [reviewMessage, setReviewMessage] = useState<string | null>(null);
@@ -265,6 +498,11 @@ export default function IntakePage() {
   const [uploadingCsv, setUploadingCsv] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [lineItemDrafts, setLineItemDrafts] = useState<Record<string, EditableLineItem[]>>({});
+  const [lineItemMismatchOverrides, setLineItemMismatchOverrides] = useState<Record<string, boolean>>({});
+  const [savingLineItemsArtifactId, setSavingLineItemsArtifactId] = useState<string | null>(null);
+  const [lineItemsMessage, setLineItemsMessage] = useState<string | null>(null);
+  const [lineItemsError, setLineItemsError] = useState<string | null>(null);
 
   const queueQuery = useMemo(() => {
     const params = new URLSearchParams({ page: "1", limit: "50" });
@@ -304,6 +542,34 @@ export default function IntakePage() {
     void loadQueue("initial");
   }, [loadQueue]);
 
+  useEffect(() => {
+    let mounted = true;
+    const loadCategories = async () => {
+      try {
+        const response = await fetch("/api/categories");
+        const body = (await response.json()) as CategoriesResponse;
+        if (!mounted) {
+          return;
+        }
+        if (!response.ok || !Array.isArray(body.categories)) {
+          return;
+        }
+        setCategoryOptions(
+          body.categories
+            .filter((category): category is { id: string; name: string } => Boolean(category?.id && category?.name))
+            .map((category) => ({ id: category.id, name: category.name }))
+        );
+      } catch {
+        // Ignore category-load errors for intake UX.
+      }
+    };
+
+    void loadCategories();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const filteredQueue = useMemo(() => {
     if (!linkFilter) {
       return queue;
@@ -312,22 +578,39 @@ export default function IntakePage() {
     return queue.filter((entry) => entry.link_status === linkFilter);
   }, [queue, linkFilter]);
 
-  async function uploadArtifact(file: File, sourceType: "upload" | "csv"): Promise<void> {
+  async function uploadArtifact(
+    file: File,
+    sourceType: "upload" | "csv",
+    options?: {
+      extractionMode?: ReceiptExtractionMode;
+      userScope?: string;
+      originalSizeBytes?: number;
+    }
+  ): Promise<{ artifact?: { id: string; status?: string; error_message?: string | null } }> {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("source_type", sourceType);
+    if (sourceType === "upload") {
+      formData.append("extraction_mode", options?.extractionMode || receiptExtractionMode);
+      formData.append("user_scope", options?.userScope || ensureIntakeUserScopeId());
+      if (typeof options?.originalSizeBytes === "number" && options.originalSizeBytes > 0) {
+        formData.append("original_size_bytes", String(Math.round(options.originalSizeBytes)));
+      }
+    }
 
     const response = await fetch("/api/intake/upload", {
       method: "POST",
       body: formData,
     });
 
-    const body = (await response.json()) as { error?: string; artifact?: { id: string } };
+    const body = (await response.json()) as {
+      error?: string;
+      artifact?: { id: string; status?: string; error_message?: string | null };
+    };
     if (!response.ok) {
       throw new Error(body.error || "Upload failed");
     }
-
-    setUploadMessage(`Uploaded ${file.name} (${body.artifact?.id || "artifact queued"})`);
+    return body;
   }
 
   async function handleReceiptSelection(event: ChangeEvent<HTMLInputElement>) {
@@ -339,7 +622,23 @@ export default function IntakePage() {
     setUploadMessage(null);
 
     try {
-      await uploadArtifact(file, "upload");
+      const prepared = await downscaleReceiptImage(file);
+      const uploadResult = await uploadArtifact(prepared.file, "upload", {
+        extractionMode: receiptExtractionMode,
+        userScope: ensureIntakeUserScopeId(),
+        originalSizeBytes: prepared.originalSize,
+      });
+      const artifactStatus = uploadResult.artifact?.status || "received";
+      const compressedNote = prepared.wasCompressed
+        ? ` compressed from ${formatFileSize(prepared.originalSize)} to ${formatFileSize(prepared.file.size)}`
+        : "";
+      const extractionWarning =
+        uploadResult.artifact?.error_message && uploadResult.artifact.error_message.trim().length > 0
+          ? ` (${uploadResult.artifact.error_message})`
+          : "";
+      setUploadMessage(
+        `Uploaded ${prepared.file.name}${compressedNote}. Artifact ${uploadResult.artifact?.id || "queued"} is ${artifactStatus}.${extractionWarning}`
+      );
       await loadQueue("refresh");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Receipt upload failed";
@@ -359,7 +658,8 @@ export default function IntakePage() {
     setUploadMessage(null);
 
     try {
-      await uploadArtifact(file, "csv");
+      const uploadResult = await uploadArtifact(file, "csv");
+      setUploadMessage(`Uploaded ${file.name} (${uploadResult.artifact?.id || "artifact queued"})`);
       await loadQueue("refresh");
     } catch (error) {
       const message = error instanceof Error ? error.message : "CSV upload failed";
@@ -403,13 +703,194 @@ export default function IntakePage() {
     }
   }
 
-  function toggleArtifactExpanded(artifactId: string) {
+  async function runAmazonReset() {
+    const confirmed = window.confirm(
+      "Delete all Amazon intake rows (artifacts, matches, items, rematch runs, and tokens)? This cannot be undone."
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setResettingAmazon(true);
+    setResetMessage(null);
+    setResetError(null);
+
+    try {
+      const response = await fetch("/api/intake/reset-amazon", {
+        method: "POST",
+      });
+
+      const body = (await response.json()) as ResetAmazonResponse | { error: string };
+      if (!response.ok || !("success" in body)) {
+        throw new Error("error" in body ? body.error : "Failed to reset Amazon intake");
+      }
+
+      setExpandedArtifactIds([]);
+      setResetMessage(
+        `Reset complete. Deleted ${body.deleted.artifacts} Amazon artifact(s), ${body.deleted.rematch_runs} rematch run(s), ${body.deleted.tokens} token(s). Remaining Amazon artifacts: ${body.remaining_amazon_artifacts}.`
+      );
+      await loadQueue("refresh");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reset Amazon intake";
+      setResetError(message);
+    } finally {
+      setResettingAmazon(false);
+    }
+  }
+
+  function ensureLineItemDraft(entry: QueueEntry) {
+    if (entry.artifact.source_type !== "upload") {
+      return;
+    }
+    setLineItemDrafts((current) => {
+      if (current[entry.artifact.id]) {
+        return current;
+      }
+      return {
+        ...current,
+        [entry.artifact.id]: buildEditableLineItems(entry),
+      };
+    });
+  }
+
+  function toggleArtifactExpanded(entry: QueueEntry) {
+    const artifactId = entry.artifact.id;
+    ensureLineItemDraft(entry);
     setExpandedArtifactIds((current) => {
       if (current.includes(artifactId)) {
         return current.filter((id) => id !== artifactId);
       }
       return [...current, artifactId];
     });
+  }
+
+  function updateLineItemDraft(
+    artifactId: string,
+    rowIndex: number,
+    field: keyof EditableLineItem,
+    value: string
+  ) {
+    setLineItemDrafts((current) => {
+      const rows = current[artifactId] || [];
+      if (!rows[rowIndex]) {
+        return current;
+      }
+      const nextRows = rows.map((row, index) => {
+        if (index !== rowIndex) return row;
+        return {
+          ...row,
+          [field]: value,
+        };
+      });
+      return {
+        ...current,
+        [artifactId]: nextRows,
+      };
+    });
+  }
+
+  function addLineItemRow(artifactId: string) {
+    setLineItemDrafts((current) => {
+      const rows = current[artifactId] || [];
+      const nextLineIndex = rows.length;
+      return {
+        ...current,
+        [artifactId]: [
+          ...rows,
+          {
+            line_index: nextLineIndex,
+            name: "",
+            description: "",
+            quantity: "1.000",
+            unit_price: "",
+            line_total: "",
+            suggested_category_id: "",
+            confirmed_category_id: "",
+            category_confidence: "",
+          },
+        ],
+      };
+    });
+  }
+
+  function removeLineItemRow(artifactId: string, rowIndex: number) {
+    setLineItemDrafts((current) => {
+      const rows = current[artifactId] || [];
+      const nextRows = rows
+        .filter((_, index) => index !== rowIndex)
+        .map((row, index) => ({ ...row, line_index: index }));
+      return {
+        ...current,
+        [artifactId]: nextRows.length ? nextRows : [
+          {
+            line_index: 0,
+            name: "",
+            description: "",
+            quantity: "1.000",
+            unit_price: "",
+            line_total: "",
+            suggested_category_id: "",
+            confirmed_category_id: "",
+            category_confidence: "",
+          },
+        ],
+      };
+    });
+  }
+
+  async function saveLineItemDraft(entry: QueueEntry) {
+    const artifactId = entry.artifact.id;
+    const lineItems = lineItemDrafts[artifactId] || buildEditableLineItems(entry);
+    if (lineItems.length === 0) {
+      setLineItemsError("Add at least one line item before saving.");
+      return;
+    }
+
+    const expectedTotal = entry.extraction?.total_amount;
+    const lineTotal = Number(
+      lineItems.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0).toFixed(2)
+    );
+    const difference =
+      expectedTotal !== null && expectedTotal !== undefined
+        ? Number((lineTotal - expectedTotal).toFixed(2))
+        : null;
+    const allowTotalMismatch = lineItemMismatchOverrides[artifactId] === true;
+
+    setSavingLineItemsArtifactId(artifactId);
+    setLineItemsError(null);
+    setLineItemsMessage(null);
+
+    try {
+      const response = await fetch("/api/intake/line-items", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          artifact_id: artifactId,
+          line_items: lineItems,
+          allow_total_mismatch: allowTotalMismatch,
+        }),
+      });
+
+      const body = (await response.json()) as LineItemsSaveResponse;
+      if (!response.ok || !body.success) {
+        throw new Error(body.error || "Failed to save line items");
+      }
+
+      const savedLineTotal = body.totals?.line_total ?? lineTotal;
+      const savedDifference = body.totals?.difference ?? difference;
+      const createdCount = typeof body.transactions_created === "number" ? body.transactions_created : lineItems.length;
+      setLineItemsMessage(
+        `Saved and applied ${createdCount} transaction(s) for ${artifactId}. Total ${savedLineTotal.toFixed(2)}${savedDifference !== null ? ` (difference ${savedDifference > 0 ? "+" : ""}${savedDifference.toFixed(2)})` : ""}.`
+      );
+      await loadQueue("refresh");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save line items";
+      setLineItemsError(message);
+    } finally {
+      setSavingLineItemsArtifactId(null);
+    }
   }
 
   async function runReviewAction(artifactId: string, action: ReviewAction) {
@@ -462,7 +943,21 @@ export default function IntakePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <label className="border border-slate-200 dark:border-slate-700 rounded-xl p-4 bg-slate-50 dark:bg-slate-900/30">
             <div className="text-sm font-medium text-slate-900 dark:text-white">Take photo / Upload receipt</div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Image or PDF. Camera-first on mobile.</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Image or PDF. Camera-first on mobile. Large images are compressed before upload.
+            </p>
+            <div className="mt-2">
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Extraction mode</label>
+              <select
+                className="select mt-1"
+                value={receiptExtractionMode}
+                onChange={(event) => setReceiptExtractionMode(event.target.value as ReceiptExtractionMode)}
+                disabled={uploadingReceipt || uploadingCsv}
+              >
+                <option value="google_model">Google Model</option>
+                <option value="ocr">OCR</option>
+              </select>
+            </div>
             <input
               type="file"
               accept="image/*,application/pdf"
@@ -516,15 +1011,23 @@ export default function IntakePage() {
             <button
               type="button"
               onClick={() => void runAmazonRematch()}
-              disabled={loadingQueue || refreshingQueue || runningRematch}
+              disabled={loadingQueue || refreshingQueue || runningRematch || resettingAmazon}
               className="rounded-lg border border-blue-700 bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
             >
               {runningRematch ? "Re-matching..." : "Re-match Amazon Orders"}
             </button>
             <button
               type="button"
+              onClick={() => void runAmazonReset()}
+              disabled={loadingQueue || refreshingQueue || runningRematch || resettingAmazon}
+              className="rounded-lg border border-red-700 bg-red-700 px-3 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-60"
+            >
+              {resettingAmazon ? "Resetting..." : "Reset Amazon Intake"}
+            </button>
+            <button
+              type="button"
               onClick={() => void loadQueue("refresh")}
-              disabled={loadingQueue || refreshingQueue || runningRematch}
+              disabled={loadingQueue || refreshingQueue || runningRematch || resettingAmazon}
               className="btn-secondary text-sm"
             >
               {refreshingQueue ? "Refreshing..." : "Refresh"}
@@ -544,6 +1047,18 @@ export default function IntakePage() {
           </p>
         )}
 
+        {resetMessage && (
+          <p className="text-sm rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-2 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-300">
+            {resetMessage}
+          </p>
+        )}
+
+        {resetError && (
+          <p className="text-sm rounded-lg border border-red-200 bg-red-50 text-red-700 px-3 py-2 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
+            {resetError}
+          </p>
+        )}
+
         {reviewMessage && (
           <p className="text-sm rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-2 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-300">
             {reviewMessage}
@@ -553,6 +1068,18 @@ export default function IntakePage() {
         {reviewError && (
           <p className="text-sm rounded-lg border border-red-200 bg-red-50 text-red-700 px-3 py-2 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
             {reviewError}
+          </p>
+        )}
+
+        {lineItemsMessage && (
+          <p className="text-sm rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-2 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-300">
+            {lineItemsMessage}
+          </p>
+        )}
+
+        {lineItemsError && (
+          <p className="text-sm rounded-lg border border-red-200 bg-red-50 text-red-700 px-3 py-2 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
+            {lineItemsError}
           </p>
         )}
 
@@ -632,9 +1159,21 @@ export default function IntakePage() {
               <tbody>
                 {filteredQueue.map((entry) => {
                   const isAmazon = entry.artifact.source_type === "amazon_extension";
+                  const isUploadReceipt = entry.artifact.source_type === "upload";
                   const isExpanded = expandedArtifactIds.includes(entry.artifact.id);
                   const isReviewBusy = activeReviewArtifactId === entry.artifact.id;
                   const displayItems = buildDisplayItems(entry);
+                  const draftItems = isUploadReceipt
+                    ? lineItemDrafts[entry.artifact.id] || buildEditableLineItems(entry)
+                    : [];
+                  const draftLineTotal = Number(
+                    draftItems.reduce((sum, item) => sum + (Number(item.line_total) || 0), 0).toFixed(2)
+                  );
+                  const expectedTotal = entry.extraction?.total_amount ?? null;
+                  const totalDifference =
+                    expectedTotal !== null ? Number((draftLineTotal - expectedTotal).toFixed(2)) : null;
+                  const totalMismatch = totalDifference !== null && Math.abs(totalDifference) > 1;
+                  const allowTotalMismatch = lineItemMismatchOverrides[entry.artifact.id] === true;
                   const productPreview = displayItems.slice(0, 2).map((item) => item.title).join("; ");
                   const currency = entry.external_order?.currency || entry.extraction?.currency || "USD";
                   const detail =
@@ -678,7 +1217,7 @@ export default function IntakePage() {
                           <div className="flex flex-wrap items-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() => toggleArtifactExpanded(entry.artifact.id)}
+                              onClick={() => toggleArtifactExpanded(entry)}
                               className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
                             >
                               {isExpanded ? "Hide" : "Review"}
@@ -775,9 +1314,191 @@ export default function IntakePage() {
                               <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900/50">
                                 <div className="flex items-center justify-between gap-3">
                                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Order Items</p>
-                                  <span className="text-xs text-slate-500 dark:text-slate-400">{displayItems.length} item(s)</span>
+                                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                                    {isUploadReceipt ? `${draftItems.length} draft item(s)` : `${displayItems.length} item(s)`}
+                                  </span>
                                 </div>
-                                {displayItems.length === 0 ? (
+                                {isUploadReceipt ? (
+                                  <div className="mt-3 space-y-3">
+                                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                                      <div className="text-xs text-slate-600 dark:text-slate-300">
+                                        <p>
+                                          Line total:{" "}
+                                          <span className="font-semibold">{formatMoney(draftLineTotal, currency)}</span>
+                                          {expectedTotal !== null && (
+                                            <>
+                                              {" "}
+                                              • Expected: <span className="font-semibold">{formatMoney(expectedTotal, currency)}</span>
+                                            </>
+                                          )}
+                                          {totalDifference !== null && (
+                                            <>
+                                              {" "}
+                                              • Difference:{" "}
+                                              <span
+                                                className={
+                                                  totalMismatch
+                                                    ? "font-semibold text-red-700 dark:text-red-300"
+                                                    : "font-semibold text-emerald-700 dark:text-emerald-300"
+                                                }
+                                              >
+                                                {totalDifference > 0 ? "+" : ""}
+                                                {totalDifference.toFixed(2)}
+                                              </span>
+                                            </>
+                                          )}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => addLineItemRow(entry.artifact.id)}
+                                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                                        >
+                                          Add Row
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => void saveLineItemDraft(entry)}
+                                          disabled={savingLineItemsArtifactId === entry.artifact.id}
+                                          className="rounded-md border border-blue-700 bg-blue-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          {savingLineItemsArtifactId === entry.artifact.id ? "Saving..." : "Save Items"}
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {totalMismatch && (
+                                      <label className="inline-flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                                        <input
+                                          type="checkbox"
+                                          checked={allowTotalMismatch}
+                                          onChange={(event) =>
+                                            setLineItemMismatchOverrides((current) => ({
+                                              ...current,
+                                              [entry.artifact.id]: event.target.checked,
+                                            }))
+                                          }
+                                        />
+                                        Allow save with total mismatch greater than $1.00
+                                      </label>
+                                    )}
+
+                                    <div className="overflow-x-auto rounded-md border border-slate-200 dark:border-slate-700">
+                                      <table className="min-w-full text-xs">
+                                        <thead className="bg-slate-100 dark:bg-slate-800">
+                                          <tr>
+                                            <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">#</th>
+                                            <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Name</th>
+                                            <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Description</th>
+                                            <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Qty</th>
+                                            <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Cost</th>
+                                            <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Amount</th>
+                                            <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Suggested Category</th>
+                                            <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300">Confidence</th>
+                                            <th className="px-2 py-1.5 text-left font-medium text-slate-600 dark:text-slate-300"></th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {draftItems.map((item, rowIndex) => (
+                                            <tr key={`${entry.artifact.id}-draft-${rowIndex}`} className="border-t border-slate-200 dark:border-slate-700">
+                                              <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300 align-top pt-2.5">{rowIndex + 1}</td>
+                                              <td className="px-2 py-1.5">
+                                                <input
+                                                  value={item.name}
+                                                  onChange={(event) =>
+                                                    updateLineItemDraft(entry.artifact.id, rowIndex, "name", event.target.value)
+                                                  }
+                                                  className="w-full rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                                />
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                <input
+                                                  value={item.description}
+                                                  onChange={(event) =>
+                                                    updateLineItemDraft(entry.artifact.id, rowIndex, "description", event.target.value)
+                                                  }
+                                                  className="w-full rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                                />
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                <input
+                                                  value={item.quantity}
+                                                  onChange={(event) =>
+                                                    updateLineItemDraft(entry.artifact.id, rowIndex, "quantity", event.target.value)
+                                                  }
+                                                  className="w-20 rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                                />
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                <input
+                                                  value={item.unit_price}
+                                                  onChange={(event) =>
+                                                    updateLineItemDraft(entry.artifact.id, rowIndex, "unit_price", event.target.value)
+                                                  }
+                                                  className="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                                />
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                <input
+                                                  value={item.line_total}
+                                                  onChange={(event) =>
+                                                    updateLineItemDraft(entry.artifact.id, rowIndex, "line_total", event.target.value)
+                                                  }
+                                                  className="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                                />
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                <select
+                                                  value={item.suggested_category_id}
+                                                  onChange={(event) =>
+                                                    updateLineItemDraft(
+                                                      entry.artifact.id,
+                                                      rowIndex,
+                                                      "suggested_category_id",
+                                                      event.target.value
+                                                    )
+                                                  }
+                                                  className="w-full rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                                >
+                                                  <option value="">Unassigned</option>
+                                                  {categoryOptions.map((category) => (
+                                                    <option key={category.id} value={category.id}>
+                                                      {category.name}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                <input
+                                                  value={item.category_confidence}
+                                                  onChange={(event) =>
+                                                    updateLineItemDraft(
+                                                      entry.artifact.id,
+                                                      rowIndex,
+                                                      "category_confidence",
+                                                      event.target.value
+                                                    )
+                                                  }
+                                                  className="w-20 rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                                />
+                                              </td>
+                                              <td className="px-2 py-1.5">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => removeLineItemRow(entry.artifact.id, rowIndex)}
+                                                  className="rounded border border-red-300 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/20"
+                                                >
+                                                  Remove
+                                                </button>
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                ) : displayItems.length === 0 ? (
                                   <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">No product line items parsed for this order yet.</p>
                                 ) : (
                                   <div className="mt-2 overflow-x-auto rounded-md border border-slate-200 dark:border-slate-700">
@@ -795,7 +1516,37 @@ export default function IntakePage() {
                                         {displayItems.map((item) => (
                                           <tr key={`${entry.artifact.id}-item-${item.line_index}`} className="border-t border-slate-200 dark:border-slate-700">
                                             <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">{item.line_index + 1}</td>
-                                            <td className="px-2 py-1.5 text-slate-700 dark:text-slate-200">{item.title || "Untitled item"}</td>
+                                            <td className="px-2 py-1.5 text-slate-700 dark:text-slate-200">
+                                              <div className="space-y-0.5">
+                                                <p>{item.title || "Untitled item"}</p>
+                                                {item.suggested_category_name && (
+                                                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                                    Suggested category: {item.suggested_category_name}
+                                                    {item.category_confidence !== null && item.category_confidence !== undefined
+                                                      ? ` (${Math.round(item.category_confidence * 100)}%)`
+                                                      : ""}
+                                                  </p>
+                                                )}
+                                                {(item.product_url || item.asin || item.source) && (
+                                                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                                    {item.product_url && (
+                                                      <a
+                                                        href={item.product_url}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="underline hover:text-blue-600 dark:hover:text-blue-300"
+                                                      >
+                                                        Product Link
+                                                      </a>
+                                                    )}
+                                                    {item.product_url && item.asin ? " • " : ""}
+                                                    {item.asin ? `ASIN: ${item.asin}` : ""}
+                                                    {(item.product_url || item.asin) && item.source ? " • " : ""}
+                                                    {item.source ? `Source: ${item.source}` : ""}
+                                                  </p>
+                                                )}
+                                              </div>
+                                            </td>
                                             <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">{item.quantity}</td>
                                             <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">{formatMoney(item.unit_price, currency)}</td>
                                             <td className="px-2 py-1.5 text-slate-700 dark:text-slate-200">{formatMoney(item.line_total, currency)}</td>

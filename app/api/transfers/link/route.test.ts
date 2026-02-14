@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mockSupabase = {
@@ -18,7 +18,11 @@ import { POST, DELETE } from "./route";
 describe("/api/transfers/link", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSupabase.eq.mockResolvedValue({ error: null } as any);
+    mockSupabase.from.mockImplementation(() => mockSupabase);
+    mockSupabase.update.mockImplementation(() => mockSupabase);
+    mockSupabase.eq.mockImplementation(() => mockSupabase);
+    mockSupabase.select.mockImplementation(() => mockSupabase);
+    mockSupabase.single.mockImplementation(() => mockSupabase);
   });
 
   it("links two transactions bidirectionally", async () => {

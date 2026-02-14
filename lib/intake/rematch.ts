@@ -197,7 +197,7 @@ async function fetchCandidates(
 function classifyMatch(
   scored: ScoredCandidate[]
 ): {
-  status: "matched" | "needs_review" | "unmatched";
+  status: "matched" | "needs_review" | "unmatched" | "parsed";
   matchStatus: "suggested" | "unmatched";
   transactionId: string | null;
   confidence: number | null;

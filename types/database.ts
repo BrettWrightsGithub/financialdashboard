@@ -60,6 +60,7 @@ export interface Category {
   id: string;
   name: string;
   cashflow_group: CashflowGroup;
+  flow_type?: FlowType | null;
   description: string | null;
   color: string | null;
   icon: string | null;
@@ -316,6 +317,7 @@ export type IntakeMatchStatus = "unmatched" | "suggested" | "confirmed" | "rejec
 export interface IntakeArtifact {
   id: string;
   source_type: IntakeSourceType;
+  created_by: string | null;
   marketplace: string | null;
   provider_order_id: string | null;
   storage_path: string | null;

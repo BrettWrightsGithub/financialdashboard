@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
 export async function GET(request: NextRequest) {
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase client is unavailable" }, { status: 500 });
+  }
+  const client = supabase;
+
   try {
     const { searchParams } = new URL(request.url);
     const month = searchParams.get("month");
@@ -25,7 +30,7 @@ export async function GET(request: NextRequest) {
     // Convert to first day of month for database query
     const monthDate = `${month}-01`;
 
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from("expected_inflows")
       .select(`
         *,
@@ -65,6 +70,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase client is unavailable" }, { status: 500 });
+  }
+  const client = supabase;
+
   try {
     const body = await request.json();
     const { 
@@ -126,7 +136,7 @@ export async function POST(request: NextRequest) {
     const monthDate = `${month}-01`;
 
     // Create the expected inflow
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from("expected_inflows")
       .insert({
         source,
@@ -192,6 +202,11 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase client is unavailable" }, { status: 500 });
+  }
+  const client = supabase;
+
   try {
     const body = await request.json();
     const { 
@@ -293,7 +308,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from("expected_inflows")
       .update(updateData)
       .eq("id", id)
@@ -356,6 +371,11 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase client is unavailable" }, { status: 500 });
+  }
+  const client = supabase;
+
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
@@ -376,7 +396,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const { error } = await supabase
+    const { error } = await client
       .from("expected_inflows")
       .delete()
       .eq("id", id);

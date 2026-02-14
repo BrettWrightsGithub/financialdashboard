@@ -60,6 +60,7 @@ export interface Category {
   id: string;
   name: string;
   cashflow_group: CashflowGroup;
+  flow_type?: FlowType | null;
   description: string | null;
   color: string | null;
   icon: string | null;
@@ -316,6 +317,7 @@ export type IntakeMatchStatus = "unmatched" | "suggested" | "confirmed" | "rejec
 export interface IntakeArtifact {
   id: string;
   source_type: IntakeSourceType;
+  created_by: string | null;
   marketplace: string | null;
   provider_order_id: string | null;
   storage_path: string | null;
@@ -399,6 +401,44 @@ export interface ExternalOrderItem {
   unit_price: number | null;
   line_total: number;
   raw_item_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CsvImportBatchStatus = "previewed" | "needs_review" | "ready_to_apply" | "applied" | "error";
+export type CsvImportRowParseStatus = "valid" | "invalid" | "skipped";
+export type CsvImportRowDedupeStatus = "new" | "duplicate" | "merge" | "skip" | "imported";
+
+export interface CsvImportBatch {
+  id: string;
+  artifact_id: string;
+  mapping_json: Record<string, unknown>;
+  status: CsvImportBatchStatus;
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  duplicate_rows: number;
+  applied_rows: number;
+  created_by: string | null;
+  applied_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CsvImportRow {
+  id: string;
+  batch_id: string;
+  row_index: number;
+  raw_row_json: Record<string, unknown>;
+  normalized_date: string | null;
+  normalized_description: string | null;
+  normalized_amount: number | null;
+  source_row_hash: string | null;
+  parse_status: CsvImportRowParseStatus;
+  parse_error: string | null;
+  dedupe_status: CsvImportRowDedupeStatus;
+  dedupe_transaction_id: string | null;
+  imported_transaction_id: string | null;
   created_at: string;
   updated_at: string;
 }

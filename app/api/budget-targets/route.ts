@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
 export async function GET(request: NextRequest) {
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase client is unavailable" }, { status: 500 });
+  }
+  const client = supabase;
+
   try {
     const { searchParams } = new URL(request.url);
     const month = searchParams.get("month");
@@ -25,7 +30,7 @@ export async function GET(request: NextRequest) {
     // Convert to first day of month for database query
     const monthDate = `${month}-01`;
 
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from("budget_targets")
       .select(`
         *,
@@ -59,6 +64,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase client is unavailable" }, { status: 500 });
+  }
+  const client = supabase;
+
   try {
     const body = await request.json();
     const { category_id, month, amount, notes } = body;
@@ -92,7 +102,7 @@ export async function POST(request: NextRequest) {
     const monthDate = `${month}-01`;
 
     // Upsert the budget target
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from("budget_targets")
       .upsert(
         {
@@ -154,6 +164,11 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase client is unavailable" }, { status: 500 });
+  }
+  const client = supabase;
+
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
@@ -174,7 +189,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const { error } = await supabase
+    const { error } = await client
       .from("budget_targets")
       .delete()
       .eq("id", id);

@@ -202,14 +202,13 @@ describe("retroactiveRules", () => {
       expect(result?.skippedLocked).toBe(2);
     });
 
-    it("should return null on RPC error", async () => {
+    it("should throw on RPC error", async () => {
       mockSupabase.rpc.mockResolvedValueOnce({
         data: null,
         error: { message: "Rule not found" },
       });
 
-      const result = await applyRuleRetroactively("bad-rule", ["tx-1"]);
-      expect(result).toBeNull();
+      await expect(applyRuleRetroactively("bad-rule", ["tx-1"])).rejects.toThrow("Rule not found");
     });
   });
 

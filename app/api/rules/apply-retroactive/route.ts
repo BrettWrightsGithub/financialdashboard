@@ -23,13 +23,6 @@ export async function POST(request: NextRequest) {
 
     const result = await applyRuleRetroactively(rule_id, transaction_ids, created_by);
 
-    if (!result) {
-      return NextResponse.json(
-        { error: "Failed to apply rule" },
-        { status: 500 }
-      );
-    }
-
     return NextResponse.json({
       success: true,
       batch_id: result.batchId,

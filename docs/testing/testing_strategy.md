@@ -10,7 +10,7 @@
 - `npm run typecheck`: TypeScript compile checks (`tsc --noEmit`)
 - `npm run test:unit`: unit + component suites (`lib/**/*.test.ts`, `components/**/*.test.tsx`)
 - `npm run test:integration`: API route suites (`app/api/**/*.test.ts`)
-- `npm run test:e2e:smoke`: smoke e2e (`e2e/transactions-review-queue.smoke.spec.ts`, Chromium only)
+- `npm run test:e2e:smoke`: smoke e2e (`e2e/*.smoke.spec.ts`, Chromium only)
 - `npm run test:e2e`: Playwright specs (`e2e/**/*.spec.ts`)
 - `npm run test:coverage`: Vitest coverage run
 
@@ -25,10 +25,11 @@
   2. `npm run preflight`
   3. `npm run lint`
   4. `npm run typecheck`
-  5. `npm run test:unit`
-  6. `npm run test:integration`
-  7. `npx playwright install --with-deps chromium`
-  8. `npm run test:e2e:smoke`
+  5. `npm run build`
+  6. `npm run test:unit`
+  7. `npm run test:integration`
+  8. `npx playwright install --with-deps chromium`
+  9. `npm run test:e2e:smoke`
 
 ---
 
@@ -384,7 +385,7 @@ Each workflow should specify which test types are required:
   "test": "npm run test:unit",
   "test:unit": "vitest run \"lib/**/*.test.ts\" \"components/**/*.test.tsx\"",
   "test:integration": "vitest run \"app/api/**/*.test.ts\"",
-  "test:e2e:smoke": "playwright test e2e/transactions-review-queue.smoke.spec.ts --project=chromium",
+  "test:e2e:smoke": "playwright test \"e2e/*.smoke.spec.ts\" --project=chromium",
   "test:e2e": "playwright test",
   "test:coverage": "vitest run --coverage",
   "test:watch": "vitest"

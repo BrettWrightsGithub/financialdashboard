@@ -35,7 +35,10 @@ Represents any financial account (bank, credit card, loan, etc.).
 | provider            | text        | NO       | —                 | `teller`, `plaid`, `gmail_venmo`, `manual`, etc. |
 | provider_account_id | text        | YES      | —                 | External ID (e.g., Teller `acc_…`, Plaid `account_id`). |
 | name                | text        | NO       | —                 | Account name from provider. |
+| display_name        | text        | YES      | —                 | User-editable label shown in UI. Backfilled from `name` when missing. |
 | institution         | text        | YES      | —                 | Bank/institution name. |
+| owner               | text        | YES      | —                 | Account owner label, typically `Brett`, `Ashley`, or `Joint`. |
+| subtype             | text        | YES      | —                 | Normalized account type used by UI/rules (`checking`, `savings`, etc.). |
 | account_type        | text        | YES      | —                 | `checking`, `savings`, `credit_card`, etc. |
 | mask                | text        | YES      | —                 | Last 4 digits. |
 | balance_current     | numeric     | YES      | —                 | Current balance. |
@@ -45,6 +48,10 @@ Represents any financial account (bank, credit card, loan, etc.).
 | connection_id       | uuid        | YES      | —                 | FK → provider_connections.id. |
 | created_at          | timestamptz | YES      | now()             | |
 | updated_at          | timestamptz | YES      | now()             | |
+
+Notes:
+- `account_type` is retained as a legacy compatibility column; newer writes/read paths use `subtype`.
+- API normalization falls back as: `display_name <- name`, `subtype <- account_type`, `owner <- 'Joint'`.
 
 ---
 
@@ -262,8 +269,11 @@ Denormalized view joining transactions with account, category, and counterparty 
 | created_at                | timestamptz | |
 | updated_at                | timestamptz | |
 | account_name              | text        | From accounts.name |
+| account_display_name      | text        | From accounts.display_name (fallback accounts.name) |
 | account_institution       | text        | From accounts.institution |
-| account_type              | text        | From accounts.account_type |
+| account_owner             | text        | From accounts.owner |
+| account_subtype           | text        | From accounts.subtype (fallback accounts.account_type) |
+| account_type              | text        | Legacy alias from accounts.account_type |
 | category_name             | text        | From categories.name |
 | category_cashflow_group   | text        | From categories.cashflow_group |
 | category_color            | text        | From categories.color |

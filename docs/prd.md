@@ -50,6 +50,10 @@ Single table for Teller, Plaid, Venmo, manual.
 | created_at           | timestamptz| Default now. |
 | updated_at           | timestamptz| Updated on sync. |
 
+Compatibility notes:
+- Legacy databases may still contain `institution` and `account_type`; runtime/API paths normalize those into `institution_name` and `subtype`.
+- If missing, `display_name` is backfilled from `name`, and `owner` defaults to `Joint`.
+
 ---
 
 ### 2.2 `categories`
@@ -551,4 +555,3 @@ Assume 1 AFCU checking account and ~300 tx/month.
 Total rough v1 cost for Plaid (AFCU) ≈ **$4–5 per month**.
 
 You can later increase balance polling frequency or add refresh calls if you need more real-time accuracy, expecting costs to rise to the ~$10–15/month range if you go aggressive.
-

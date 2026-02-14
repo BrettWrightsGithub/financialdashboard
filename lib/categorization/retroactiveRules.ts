@@ -33,6 +33,165 @@ export interface ApplyResult {
   skippedLocked: number;
 }
 
+function getRpcErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "Unknown database error";
+  const err = error as Record<string, unknown>;
+  const code = typeof err.code === "string" ? err.code : undefined;
+  const message = typeof err.message === "string" ? err.message : "Unknown database error";
+  const details = typeof err.details === "string" ? err.details : undefined;
+  const hint = typeof err.hint === "string" ? err.hint : undefined;
+  const parts = [code ? `[${code}]` : null, message, details, hint].filter(Boolean);
+  return parts.join(" ");
+}
+
+function isMissingSchemaObjectError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as Record<string, unknown>;
+  const code = typeof err.code === "string" ? err.code : "";
+  const message = typeof err.message === "string" ? err.message.toLowerCase() : "";
+  return (
+    code === "42P01" ||
+    code === "42703" ||
+    message.includes("does not exist") ||
+    message.includes("could not find") ||
+    message.includes("undefined column")
+  );
+}
+
+function shouldUseRetroactiveFallback(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("transactions_category_batch_id_fkey") ||
+    lower.includes("category_batch_id") ||
+    lower.includes("fk_audit_log_batch") ||
+    lower.includes("fn_apply_rule_retroactive") ||
+    lower.includes("undefined function")
+  );
+}
+
+async function applyRuleRetroactivelyFallback(
+  ruleId: string,
+  transactionIds: string[],
+  createdBy: string
+): Promise<ApplyResult> {
+  const supabase = createServerSupabaseClient();
+  const batchId = crypto.randomUUID();
+
+  const { data: rule, error: ruleError } = await supabase
+    .from("categorization_rules")
+    .select("id, name, is_active, assign_category_id, assign_is_transfer, assign_is_pass_through")
+    .eq("id", ruleId)
+    .single();
+
+  if (ruleError || !rule || !rule.is_active) {
+    throw new Error("Rule not found or inactive");
+  }
+
+  const description = `Retroactive application of rule: ${rule.name}`;
+
+  const categoryBatchInsert = await supabase
+    .from("category_batches")
+    .insert({ id: batchId, operation_type: "rule_apply", description });
+  if (categoryBatchInsert.error && !isMissingSchemaObjectError(categoryBatchInsert.error)) {
+    throw new Error(getRpcErrorMessage(categoryBatchInsert.error));
+  }
+
+  const legacyBatchInsert = await supabase
+    .from("rule_application_batches")
+    .insert({
+      id: batchId,
+      rule_id: ruleId,
+      operation_type: "rule_apply",
+      transaction_count: 0,
+      created_by: createdBy,
+      description,
+    });
+  if (legacyBatchInsert.error && !isMissingSchemaObjectError(legacyBatchInsert.error)) {
+    throw new Error(getRpcErrorMessage(legacyBatchInsert.error));
+  }
+
+  const { data: transactions, error: txError } = await supabase
+    .from("transactions")
+    .select("id, life_category_id, category_locked")
+    .in("id", transactionIds);
+  if (txError) {
+    throw new Error(getRpcErrorMessage(txError));
+  }
+
+  const byId = new Map((transactions || []).map((tx) => [tx.id, tx]));
+  let appliedCount = 0;
+  let skippedLocked = 0;
+
+  for (const transactionId of transactionIds) {
+    const tx = byId.get(transactionId);
+    if (!tx) continue;
+    if (tx.category_locked) {
+      skippedLocked += 1;
+      continue;
+    }
+    if (tx.life_category_id === rule.assign_category_id) {
+      continue;
+    }
+
+    const { error: updateError } = await supabase
+      .from("transactions")
+      .update({
+        life_category_id: rule.assign_category_id,
+        is_transfer: rule.assign_is_transfer ?? undefined,
+        is_pass_through: rule.assign_is_pass_through ?? undefined,
+        category_source: "rule",
+        applied_rule_id: ruleId,
+        category_batch_id: batchId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", transactionId);
+
+    if (updateError) {
+      throw new Error(getRpcErrorMessage(updateError));
+    }
+
+    // Best effort audit logging in fallback mode.
+    const { error: auditError } = await supabase.rpc("fn_log_category_change", {
+      p_transaction_id: transactionId,
+      p_previous_category_id: tx.life_category_id,
+      p_new_category_id: rule.assign_category_id,
+      p_change_source: "rule",
+      p_rule_id: ruleId,
+      p_confidence_score: 1.0,
+      p_changed_by: createdBy,
+      p_batch_id: batchId,
+      p_notes: "Retroactive rule application (fallback)",
+    });
+    if (auditError && !isMissingSchemaObjectError(auditError)) {
+      console.warn("Fallback audit logging failed:", getRpcErrorMessage(auditError));
+    }
+
+    appliedCount += 1;
+  }
+
+  const legacyBatchUpdate = await supabase
+    .from("rule_application_batches")
+    .update({ transaction_count: appliedCount })
+    .eq("id", batchId);
+  if (legacyBatchUpdate.error && !isMissingSchemaObjectError(legacyBatchUpdate.error)) {
+    console.warn("Legacy batch update failed:", getRpcErrorMessage(legacyBatchUpdate.error));
+  }
+
+  const categoryBatchUpdate = await supabase
+    .from("category_batches")
+    .update({ transaction_count: appliedCount })
+    .eq("id", batchId);
+  if (categoryBatchUpdate.error && !isMissingSchemaObjectError(categoryBatchUpdate.error)) {
+    console.warn("Category batch update failed:", getRpcErrorMessage(categoryBatchUpdate.error));
+  }
+
+  return {
+    batchId,
+    appliedCount,
+    skippedLocked,
+  };
+}
+
 export interface BatchInfo {
   id: string;
   ruleId: string | null;
@@ -45,6 +204,42 @@ export interface BatchInfo {
   isUndone: boolean;
   undoneAt: string | null;
   description: string | null;
+}
+
+function normalizeDescription(value: string | null): string {
+  return (value || "").toUpperCase();
+}
+
+function matchesRulePreview(
+  rule: CategorizationRule,
+  tx: Pick<Transaction, "description_raw" | "amount">
+): boolean {
+  const description = normalizeDescription(tx.description_raw);
+  const amountAbs = Math.abs(tx.amount);
+  const isOutflow = tx.amount < 0;
+
+  if (rule.match_merchant_exact && description !== rule.match_merchant_exact.toUpperCase()) {
+    return false;
+  }
+  if (
+    rule.match_merchant_contains &&
+    !description.includes(rule.match_merchant_contains.toUpperCase())
+  ) {
+    return false;
+  }
+  if (rule.match_amount_min !== null && amountAbs < rule.match_amount_min) {
+    return false;
+  }
+  if (rule.match_amount_max !== null && amountAbs > rule.match_amount_max) {
+    return false;
+  }
+  if (rule.match_direction === "outflow" && !isOutflow) {
+    return false;
+  }
+  if (rule.match_direction === "inflow" && isOutflow) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -90,12 +285,6 @@ export async function previewRuleApplication(
   if (rule.match_merchant_exact) {
     query = query.ilike("description_raw", rule.match_merchant_exact);
   }
-  if (rule.match_amount_min !== null) {
-    query = query.gte("amount", rule.match_amount_min);
-  }
-  if (rule.match_amount_max !== null) {
-    query = query.lte("amount", rule.match_amount_max);
-  }
   if (rule.match_account_id) {
     query = query.eq("account_id", rule.match_account_id);
   }
@@ -122,7 +311,9 @@ export async function previewRuleApplication(
   const targetCategoryName = (rule.categories as unknown as { name: string } | null)?.name || "Unknown";
 
   // Filter out transactions that already have the target category
-  const matching = (transactions || []).map((tx) => ({
+  const matching = (transactions || [])
+    .filter((tx) => matchesRulePreview(rule as unknown as CategorizationRule, tx as unknown as Pick<Transaction, "description_raw" | "amount">))
+    .map((tx) => ({
     id: tx.id,
     date: tx.date,
     description: tx.description_raw || "",
@@ -156,7 +347,7 @@ export async function applyRuleRetroactively(
   ruleId: string,
   transactionIds: string[],
   createdBy: string = "system"
-): Promise<ApplyResult | null> {
+): Promise<ApplyResult> {
   const supabase = createServerSupabaseClient();
 
   const { data, error } = await supabase.rpc("fn_apply_rule_retroactive", {
@@ -166,12 +357,20 @@ export async function applyRuleRetroactively(
   });
 
   if (error) {
-    console.error("Error applying rule retroactively:", error);
-    return null;
+    const errorMessage = getRpcErrorMessage(error);
+    console.error("Error applying rule retroactively:", errorMessage);
+    if (shouldUseRetroactiveFallback(errorMessage)) {
+      console.warn("Using retroactive apply fallback path due to schema mismatch.");
+      return applyRuleRetroactivelyFallback(ruleId, transactionIds, createdBy);
+    }
+    throw new Error(errorMessage);
   }
 
   // RPC returns array with single row
   const result = Array.isArray(data) ? data[0] : data;
+  if (!result?.batch_id) {
+    throw new Error("Retroactive apply returned no batch_id.");
+  }
 
   return {
     batchId: result.batch_id,

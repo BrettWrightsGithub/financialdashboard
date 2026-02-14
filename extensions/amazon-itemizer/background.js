@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
 const ORDER_HISTORY_URL = "https://www.amazon.com/gp/your-account/order-history";
 const MAX_ALLOWED_PAGES = 50;
 const INGEST_BATCH_SIZE = 25;
+const MAX_DETAIL_ENRICHMENT_PER_SYNC = 20;
 
 let runtimeStatus = {
   running: false,
@@ -21,6 +22,17 @@ let runtimeStatus = {
   message: "Ready",
   updatedAt: new Date().toISOString(),
 };
+
+function defaultSyncState() {
+  return {
+    syncCursor: null,
+    lastSyncAt: null,
+    lastSyncStatus: null,
+    lastSyncError: null,
+    lastSyncedOrders: 0,
+    lastPagesScanned: 0,
+  };
+}
 
 function normalizeApiBaseUrl(value) {
   try {
@@ -76,16 +88,7 @@ async function setSettings(nextSettings) {
 }
 
 async function getState() {
-  return (
-    (await getStorageValue(STORAGE_KEYS.state)) || {
-      syncCursor: null,
-      lastSyncAt: null,
-      lastSyncStatus: null,
-      lastSyncError: null,
-      lastSyncedOrders: 0,
-      lastPagesScanned: 0,
-    }
-  );
+  return (await getStorageValue(STORAGE_KEYS.state)) || defaultSyncState();
 }
 
 async function setState(patch) {
@@ -96,6 +99,23 @@ async function setState(patch) {
   };
   await setStorageValue(STORAGE_KEYS.state, next);
   return next;
+}
+
+async function resetSyncState(options = {}) {
+  const clearToken = Boolean(options.clearToken);
+  await setStorageValue(STORAGE_KEYS.state, defaultSyncState());
+
+  if (clearToken) {
+    await chrome.storage.local.remove(STORAGE_KEYS.token);
+  }
+
+  statusWithPatch({
+    running: false,
+    phase: "idle",
+    message: clearToken ? "Sync cursor and token reset" : "Sync cursor reset",
+  });
+
+  return getCompositeStatus();
 }
 
 function createInstallId() {
@@ -257,6 +277,28 @@ async function scrapeCurrentPage(tabId, attempt = 0) {
   }
 }
 
+async function scrapeOrderDetailsPage(tabId, orderId, attempt = 0) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "SCRAPE_ORDER_DETAILS_PAGE",
+      order_id: orderId,
+    });
+
+    if (!response || !response.ok || !response.order) {
+      const message = (response && response.error) || `Failed to scrape order details for ${orderId}`;
+      throw new Error(message);
+    }
+
+    return response.order;
+  } catch (error) {
+    if (attempt >= 4) {
+      throw error;
+    }
+    await delay(400 * (attempt + 1));
+    return scrapeOrderDetailsPage(tabId, orderId, attempt + 1);
+  }
+}
+
 function compareOrderKeys(a, b) {
   if (a.order_date > b.order_date) {
     return -1;
@@ -340,6 +382,106 @@ function getNewestOrder(orders) {
   const copy = [...orders];
   copy.sort(compareOrderKeys);
   return copy[0];
+}
+
+function normalizeOrderTitle(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function isGenericOrderItem(orderId, item) {
+  const title = normalizeOrderTitle(item?.title);
+  return title === `amazon order ${String(orderId || "").toLowerCase()}`;
+}
+
+function shouldEnrichOrder(order) {
+  if (!Array.isArray(order?.items) || order.items.length === 0) {
+    return true;
+  }
+
+  const nonGenericTitles = order.items.filter((item) => !isGenericOrderItem(order.provider_order_id, item));
+  return nonGenericTitles.length === 0;
+}
+
+function getOrderDetailsUrl(order) {
+  const raw = order?.raw_order_json;
+  const fromRaw = raw && typeof raw.order_details_url === "string" ? raw.order_details_url : "";
+  if (fromRaw) {
+    return fromRaw;
+  }
+
+  return `https://www.amazon.com/gp/your-account/order-details?orderID=${encodeURIComponent(
+    order.provider_order_id
+  )}`;
+}
+
+function mergeOrderData(baseOrder, detailsOrder) {
+  if (!detailsOrder) {
+    return baseOrder;
+  }
+
+  const nextItems =
+    Array.isArray(detailsOrder.items) && detailsOrder.items.length > 0
+      ? detailsOrder.items
+      : baseOrder.items;
+
+  const nextRawOrderJson = {
+    ...(baseOrder.raw_order_json || {}),
+    ...(detailsOrder.raw_order_json || {}),
+    order_details_url: getOrderDetailsUrl(baseOrder),
+  };
+
+  return {
+    ...baseOrder,
+    ...detailsOrder,
+    items: nextItems,
+    raw_order_json: nextRawOrderJson,
+  };
+}
+
+async function enrichOrdersWithDetails(tabId, orders) {
+  const candidates = orders
+    .map((order, index) => ({ order, index }))
+    .filter(({ order }) => shouldEnrichOrder(order))
+    .slice(0, MAX_DETAIL_ENRICHMENT_PER_SYNC);
+
+  if (!candidates.length) {
+    return {
+      orders,
+      enrichedOrders: 0,
+    };
+  }
+
+  const nextOrders = [...orders];
+  let enrichedOrders = 0;
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const { order, index } = candidates[i];
+    const detailsUrl = getOrderDetailsUrl(order);
+
+    try {
+      statusWithPatch({
+        phase: "scrape",
+        message: `Enriching order details ${i + 1}/${candidates.length}`,
+      });
+
+      await chrome.tabs.update(tabId, { url: detailsUrl });
+      await waitForTabComplete(tabId);
+      const detailedOrder = await scrapeOrderDetailsPage(tabId, order.provider_order_id);
+      nextOrders[index] = mergeOrderData(order, detailedOrder);
+      enrichedOrders += 1;
+      await delay(250);
+    } catch {
+      // Keep original order payload if details scraping fails.
+    }
+  }
+
+  return {
+    orders: nextOrders,
+    enrichedOrders,
+  };
 }
 
 async function syncAmazonOrders() {
@@ -431,24 +573,35 @@ async function syncAmazonOrders() {
       nextPageUrl = scraped.next_page_url;
     }
 
+    let ordersForUpload = collectedOrders;
+    let enrichedOrders = 0;
+
+    if (tabId && ordersForUpload.length > 0) {
+      const enriched = await enrichOrdersWithDetails(tabId, ordersForUpload);
+      ordersForUpload = enriched.orders;
+      enrichedOrders = enriched.enrichedOrders;
+    }
+
     statusWithPatch({
       phase: "upload",
-      message: collectedOrders.length
-        ? `Uploading ${collectedOrders.length} order(s)`
+      message: ordersForUpload.length
+        ? `Uploading ${ordersForUpload.length} order(s)${
+            enrichedOrders > 0 ? ` (${enrichedOrders} enriched from order details)` : ""
+          }`
         : "No new orders found",
     });
 
     let uploadedOrders = 0;
-    if (collectedOrders.length > 0) {
+    if (ordersForUpload.length > 0) {
       uploadedOrders = await uploadOrders(
         settings.apiBaseUrl,
         tokenRecord,
-        collectedOrders,
+        ordersForUpload,
         previousState.syncCursor || null
       );
     }
 
-    const newest = getNewestOrder(collectedOrders);
+    const newest = getNewestOrder(ordersForUpload);
     const nextCursor = newest
       ? {
           last_order_id: newest.provider_order_id,
@@ -553,6 +706,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       case "OPEN_OPTIONS": {
         await chrome.runtime.openOptionsPage();
         sendResponse({ ok: true });
+        break;
+      }
+
+      case "RESET_SYNC_CURSOR": {
+        const result = await resetSyncState({
+          clearToken: Boolean(message?.clearToken),
+        });
+        sendResponse({ ok: true, ...result });
         break;
       }
 

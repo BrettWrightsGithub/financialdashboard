@@ -23,7 +23,11 @@ Financial containers (Bank Accounts, Credit Cards, Loans).
 - **Purpose:** Tracks current/available balance and sync status.
 - **Key Fields:**
     - `provider_account_id`: External ID from Plaid/Teller.
+    - `display_name`: User-editable account label (falls back to `name`).
+    - `owner`: Ownership tag used in transfer logic and UI (`Brett`, `Ashley`, `Joint`).
+    - `subtype`: Normalized account type used by rules/filters (`checking`, `savings`, `credit_card`, etc.).
     - `include_in_cashflow` (Boolean): Determines if this account affects "Safe-to-Spend".
+- **Compatibility:** Legacy `account_type` may still exist; read paths should treat `subtype` as primary and fallback to `account_type`.
 - **Relationships:** Belongs to `provider_connections`.
 
 ### `categories`

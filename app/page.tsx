@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SafeToSpendCard } from "@/components/dashboard/SafeToSpendCard";
 import { CashflowCard } from "@/components/dashboard/CashflowCard";
 import { OutstandingInflowsCard } from "@/components/dashboard/OutstandingInflowsCard";
@@ -8,10 +8,14 @@ import { AlertsCard, type Alert } from "@/components/dashboard/AlertsCard";
 import { CashflowTrendCard } from "@/components/dashboard/CashflowTrendCard";
 import { OverspentCategoriesCard } from "@/components/dashboard/OverspentCategoriesCard";
 import { DailyBriefingCard } from "@/components/dashboard/DailyBriefingCard";
+import { CashflowSankeyCard } from "@/components/dashboard/CashflowSankeyCard";
 import { MonthSelector } from "@/components/budget/MonthSelector";
 import { getDashboardData, getExpectedInflows, getCashflowTrend, getOverspentCategories } from "@/lib/queries";
 import { getCurrentMonth, formatCurrency } from "@/lib/cashflow";
 import type { ExpectedInflow } from "@/types/database";
+import type { CashflowSankeyVariants } from "@/lib/cashflowSankey";
+
+const ENABLE_CASHFLOW_SANKEY = true;
 
 interface DashboardData {
   cashflow: {
@@ -31,21 +35,40 @@ interface DashboardData {
     remaining: number;
     monthlyBudget: number;
   };
+  cashflowSankey: CashflowSankeyVariants;
   outstandingInflows: ExpectedInflow[];
   transactions: any[];
 }
 
+function CardSkeleton({ className = "" }: { className?: string }) {
+  return (
+    <div className={`card p-6 animate-pulse ${className}`}>
+      <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-1/3 mb-4" />
+      <div className="h-7 bg-slate-200 dark:bg-slate-700 rounded w-2/3 mb-3" />
+      <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-1/2" />
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<DashboardData | null>(null);
   const [inflows, setInflows] = useState<ExpectedInflow[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
   const [trendData, setTrendData] = useState<{ month: string; net: number }[]>([]);
   const [overspentCategories, setOverspentCategories] = useState<any[]>([]);
+  const hasLoadedRef = useRef(false);
 
   useEffect(() => {
     async function fetchData() {
+      if (hasLoadedRef.current) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
       try {
         const [dashboardData, inflowsData, trend, overspent] = await Promise.all([
           getDashboardData(selectedMonth),
@@ -105,6 +128,8 @@ export default function DashboardPage() {
         console.error("Error fetching dashboard data:", error);
       } finally {
         setLoading(false);
+        setRefreshing(false);
+        hasLoadedRef.current = true;
       }
     }
 
@@ -147,26 +172,34 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Safe to Spend - Featured prominently */}
         <div className="lg:col-span-1">
-          <SafeToSpendCard
-            safeToSpend={data?.safeToSpend.remaining || 0}
-            weeklyTarget={data?.safeToSpend.weeklyTarget || 0}
-            spentThisWeek={data?.safeToSpend.weeklySpent || 0}
-          />
+          {refreshing ? (
+            <CardSkeleton />
+          ) : (
+            <SafeToSpendCard
+              safeToSpend={data?.safeToSpend.remaining || 0}
+              weeklyTarget={data?.safeToSpend.weeklyTarget || 0}
+              spentThisWeek={data?.safeToSpend.weeklySpent || 0}
+            />
+          )}
         </div>
 
         {/* Monthly Cashflow */}
         <div className="lg:col-span-1">
-          <CashflowCard
-            currentMonth={selectedMonth}
-            income={data?.cashflow.income || 0}
-            expenses={data?.totalExpenses || 0}
-            netCashflow={data?.netCashflow || 0}
-          />
+          {refreshing ? (
+            <CardSkeleton />
+          ) : (
+            <CashflowCard
+              currentMonth={selectedMonth}
+              income={data?.cashflow.income || 0}
+              expenses={data?.totalExpenses || 0}
+              netCashflow={data?.netCashflow || 0}
+            />
+          )}
         </div>
 
         {/* Outstanding Inflows */}
         <div className="lg:col-span-1">
-          <OutstandingInflowsCard inflows={inflows} />
+          {refreshing ? <CardSkeleton /> : <OutstandingInflowsCard inflows={inflows} />}
         </div>
       </div>
 
@@ -174,19 +207,49 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Cashflow Trend */}
         <div>
-          <CashflowTrendCard trend={trendData} />
+          {refreshing ? <CardSkeleton /> : <CashflowTrendCard trend={trendData} />}
         </div>
 
         {/* Overspent Categories */}
         <div>
-          <OverspentCategoriesCard categories={overspentCategories} />
+          {refreshing ? <CardSkeleton /> : <OverspentCategoriesCard categories={overspentCategories} />}
         </div>
       </div>
 
-      <DailyBriefingCard />
+      {ENABLE_CASHFLOW_SANKEY && (
+        <>
+          {refreshing ? (
+            <CardSkeleton className="min-h-[320px]" />
+          ) : (
+            <CashflowSankeyCard
+              month={selectedMonth}
+              data={
+                data?.cashflowSankey ?? {
+                  source: {
+                    nodes: [],
+                    links: [],
+                    totals: { inflow: 0, outflow: 0, net: 0 },
+                    meta: { topIncomeCount: 5, month: selectedMonth },
+                    projection: { expectedIncome: 0, expectedOutflow: 0, projectedNet: 0 },
+                  },
+                  category: {
+                    nodes: [],
+                    links: [],
+                    totals: { inflow: 0, outflow: 0, net: 0 },
+                    meta: { topIncomeCount: 5, month: selectedMonth },
+                    projection: { expectedIncome: 0, expectedOutflow: 0, projectedNet: 0 },
+                  },
+                }
+              }
+            />
+          )}
+        </>
+      )}
+
+      {refreshing ? <CardSkeleton /> : <DailyBriefingCard />}
 
       {/* Alerts Section */}
-      <AlertsCard alerts={alerts} />
+      {refreshing ? <CardSkeleton /> : <AlertsCard alerts={alerts} />}
     </div>
   );
 }

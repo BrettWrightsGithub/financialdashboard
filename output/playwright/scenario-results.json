@@ -1,0 +1,123 @@
+{
+  "generatedAt": "2026-02-11T02:31:50.238Z",
+  "baseUrl": "http://localhost:3000",
+  "passed": 10,
+  "failed": 0,
+  "results": [
+    {
+      "id": 1,
+      "name": "Daily Money Check-In (Read-Only)",
+      "status": "PASS",
+      "durationMs": 3513,
+      "checks": [
+        "Core dashboard cards are visible for 2026-02.",
+        "Safe-to-spend is within expected range: 69.",
+        "Net cashflow is within expected range: 1457.",
+        "Outstanding inflow card shows T-Mobile Reimbursement pending $30."
+      ],
+      "error": null
+    },
+    {
+      "id": 6,
+      "name": "Midweek Budget Guardrail Check (Read-Only)",
+      "status": "PASS",
+      "durationMs": 4662,
+      "checks": [
+        "Overspent card reports no overspent categories.",
+        "Groceries row is near expected values (actual 200 vs budget 800)."
+      ],
+      "error": null
+    },
+    {
+      "id": 7,
+      "name": "Track Missing Expected Inflows (Read-Only)",
+      "status": "PASS",
+      "durationMs": 4485,
+      "checks": [
+        "Dashboard inflows include pending T-Mobile reimbursement at $30.",
+        "Budget Planner Expected Inflows section matches dashboard pending inflow."
+      ],
+      "error": null
+    },
+    {
+      "id": 2,
+      "name": "Clear Review Queue (Write)",
+      "status": "PASS",
+      "durationMs": 2074,
+      "checks": [
+        "Ashley anchors were not in active queue and are already categorized in ledger."
+      ],
+      "error": null
+    },
+    {
+      "id": 4,
+      "name": "Split Mixed Purchase (Write)",
+      "status": "PASS",
+      "durationMs": 5204,
+      "checks": [
+        "Costco transaction was split into child rows totaling -200."
+      ],
+      "error": null
+    },
+    {
+      "id": 5,
+      "name": "Adjust Monthly Budget Targets (Write)",
+      "status": "PASS",
+      "durationMs": 3992,
+      "checks": [
+        "Baseline Feb 2026 budget targets are present for key categories.",
+        "Dining Out target updated to $350 in-line.",
+        "Dining Out target persisted after reload."
+      ],
+      "error": null
+    },
+    {
+      "id": 8,
+      "name": "Transfers Neutrality Check",
+      "status": "PASS",
+      "durationMs": 2150,
+      "checks": [
+        "Transfer pair rows are visible in ledger search results.",
+        "Transfer pair is represented as transfer and nets to zero."
+      ],
+      "error": null
+    },
+    {
+      "id": 9,
+      "name": "Weekly Mobile Triage (Write)",
+      "status": "PASS",
+      "durationMs": 1384,
+      "checks": [
+        "No actionable review-queue rows are available for Feb 2026; queue is already triaged."
+      ],
+      "error": null
+    },
+    {
+      "id": 3,
+      "name": "Correct Category + Teach System (Rule Preview First)",
+      "status": "PASS",
+      "durationMs": 4615,
+      "checks": [
+        "Anchor transaction found. Current category: \"Student Loan\".",
+        "Rule preview found 3 historical matching transactions."
+      ],
+      "error": null
+    },
+    {
+      "id": 10,
+      "name": "Assistant-Guided Rule Creation (Preview First)",
+      "status": "PASS",
+      "durationMs": 16617,
+      "checks": [
+        "Assistant generated a rule preview and exposed Confirm action without auto-applying.",
+        "Rules admin remains accessible after assistant preview flow."
+      ],
+      "error": null
+    }
+  ],
+  "cleanupNotes": [
+    "Scenario 4 cleanup: unsplit Costco transaction after verification.",
+    "Scenario 5 cleanup: restored Dining Out target to $300.",
+    "Scenario 3 cleanup: deleted temporary Capital One CRCARDPMT rule."
+  ]
+}

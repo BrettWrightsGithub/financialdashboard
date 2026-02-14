@@ -3,15 +3,20 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import type {
+  AssistantChatDebugInfo,
   AssistantChatMessage,
   AssistantChatResult,
   ParsedRulePayload,
 } from "@/lib/assistant/types";
+import { trackClientEvent } from "@/lib/clientTelemetry";
 import { RulePreviewCard } from "./RulePreviewCard";
 import type { TransactionWithDetails } from "@/types/database";
 
 interface ChatAssistantProps {
   selectedTransaction?: TransactionWithDetails | null;
+  title?: string;
+  placeholder?: string;
+  quickPrompts?: string[];
 }
 
 interface AssistantMessage extends AssistantChatMessage {
@@ -20,6 +25,18 @@ interface AssistantMessage extends AssistantChatMessage {
 
 interface AssistantResponse extends Partial<AssistantChatResult> {
   error?: string;
+}
+
+interface DebugEntry {
+  id: string;
+  request: {
+    messages: AssistantChatMessage[];
+    selectedTransaction: TransactionWithDetails | null | undefined;
+    draftRule: ParsedRulePayload | null;
+    debug: boolean;
+  };
+  response: AssistantResponse;
+  debug: AssistantChatDebugInfo | undefined;
 }
 
 function createMessage(role: "assistant" | "user", content: string): AssistantMessage {
@@ -32,7 +49,30 @@ function createMessage(role: "assistant" | "user", content: string): AssistantMe
 
 const INITIAL_MESSAGE = createMessage("assistant", "How can I help?");
 
-export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
+function buildToolCallMessages(payload: AssistantResponse): string[] {
+  const messages: string[] = [];
+
+  if (payload.debug?.llm_call) {
+    messages.push(`[tool] parse_rule_with_provider (${payload.debug.llm_call.provider}:${payload.debug.llm_call.model})`);
+  }
+
+  if (payload.action?.type) {
+    messages.push(`[tool] ${payload.action.type}`);
+  }
+
+  return messages;
+}
+
+export function ChatAssistant({
+  selectedTransaction,
+  title = "Rule Assistant",
+  placeholder = "Describe what rule you want to create...",
+  quickPrompts = [
+    "Create a Starbucks under $20 outflow rule for Coffee",
+    "Mark Venmo transfers as transfer",
+    "Create a rule for payroll inflows as Income",
+  ],
+}: ChatAssistantProps) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -40,15 +80,25 @@ export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
   const [messages, setMessages] = useState<AssistantMessage[]>([INITIAL_MESSAGE]);
   const [previewRule, setPreviewRule] = useState<ParsedRulePayload | null>(null);
   const [createdRule, setCreatedRule] = useState<{ id: string; name: string } | null>(null);
-
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
   const contextHint = useMemo(() => {
     if (!selectedTransaction) return "No transaction selected.";
     return `Selected: ${selectedTransaction.description_clean || selectedTransaction.description_raw} (${selectedTransaction.amount})`;
   }, [selectedTransaction]);
+  const emitBehaviorEvent = (eventName: string, metadata?: Record<string, unknown>) => {
+    void trackClientEvent(eventName, {
+      metadata: {
+        surface: "chat_assistant",
+        ...metadata,
+      },
+    });
+  };
 
   const confirmRule = async () => {
     if (!previewRule?.assign_category_id) return;
     setConfirming(true);
+    emitBehaviorEvent("assistant_confirm_rule_attempt", { has_preview_rule: true });
 
     try {
       const response = await fetch("/api/categorization/rules", {
@@ -66,20 +116,24 @@ export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
         setPreviewRule(null);
         setMessages((prev) => [
           ...prev,
+          createMessage("assistant", "[tool] create_categorization_rule"),
           createMessage("assistant", "Looks good. I added that rule."),
         ]);
+        emitBehaviorEvent("assistant_confirm_rule_success");
       } else {
         const payload = await response.json();
         setMessages((prev) => [
           ...prev,
           createMessage("assistant", payload.error || "Failed to save rule."),
         ]);
+        emitBehaviorEvent("assistant_confirm_rule_failed", { reason: "api_error" });
       }
     } catch {
       setMessages((prev) => [
         ...prev,
         createMessage("assistant", "Failed to save rule."),
       ]);
+      emitBehaviorEvent("assistant_confirm_rule_failed", { reason: "network_error" });
     } finally {
       setConfirming(false);
     }
@@ -94,47 +148,84 @@ export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
     setInput("");
     setLoading(true);
     setCreatedRule(null);
+    emitBehaviorEvent("assistant_send", {
+      debug_enabled: debugEnabled,
+      has_selected_transaction: Boolean(selectedTransaction),
+    });
 
     try {
+      const requestBody = {
+        messages: nextMessages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        selectedTransaction,
+        draftRule: previewRule,
+        debug: debugEnabled,
+      };
       const response = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: nextMessages.map((message) => ({
-            role: message.role,
-            content: message.content,
-          })),
-          selectedTransaction,
-          draftRule: previewRule,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       const payload: AssistantResponse = await response.json();
       const text = payload.assistant_message || payload.error || "I couldn't process that. Please try again.";
-      setMessages((prev) => [...prev, createMessage("assistant", text)]);
-      setPreviewRule(payload.rule || null);
+      const toolMessages = buildToolCallMessages(payload).map((content) => createMessage("assistant", content));
+      setMessages((prev) => [...prev, ...toolMessages, createMessage("assistant", text)]);
+      emitBehaviorEvent("assistant_response", {
+        status: payload.status || "unknown",
+        action_type: payload.action?.type || "none",
+        has_error: Boolean(payload.error),
+      });
+      const nextRule =
+        payload.rule ||
+        (payload.action?.type === "create_rule" && payload.action.preview
+          ? (payload.action.preview as ParsedRulePayload)
+          : null);
+      setPreviewRule(nextRule);
+      if (debugEnabled) {
+        setDebugEntries((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            request: requestBody,
+            response: payload,
+            debug: payload.debug,
+          },
+        ]);
+      }
     } catch {
       setMessages((prev) => [
         ...prev,
         createMessage("assistant", "I couldn't reach the assistant service."),
       ]);
+      emitBehaviorEvent("assistant_response", { status: "network_error", action_type: "none", has_error: true });
     } finally {
       setLoading(false);
     }
   };
 
   const startNewChat = () => {
+    emitBehaviorEvent("assistant_new_chat");
     setMessages([INITIAL_MESSAGE]);
     setPreviewRule(null);
     setCreatedRule(null);
     setInput("");
+    setDebugEntries([]);
   };
 
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          setOpen((value) => {
+            const next = !value;
+            emitBehaviorEvent(next ? "assistant_opened" : "assistant_closed");
+            return next;
+          });
+        }}
         className="fixed bottom-5 right-5 z-40 rounded-full bg-blue-600 text-white px-4 py-3 text-sm shadow-lg min-h-[44px]"
       >
         Assistant
@@ -143,18 +234,57 @@ export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
       {open && (
         <div className="fixed bottom-20 right-5 z-40 w-[360px] max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
           <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-            <div className="font-semibold">Rule Assistant</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-semibold">{title}</div>
+                <button
+                  type="button"
+                  className={`text-xs px-2 py-1 rounded-md border ${
+                    debugEnabled
+                      ? "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20"
+                      : "border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300"
+                  }`}
+                  onClick={() => {
+                    setDebugEnabled((prev) => {
+                      const next = !prev;
+                      emitBehaviorEvent("assistant_debug_toggled", { enabled: next });
+                      return next;
+                    });
+                  }}
+                >
+                  Debug {debugEnabled ? "On" : "Off"}
+                </button>
+            </div>
             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{contextHint}</div>
           </div>
 
           <div className="p-4 space-y-3">
+            {quickPrompts.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {quickPrompts.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => {
+                      setInput(prompt);
+                      emitBehaviorEvent("assistant_quick_prompt_selected");
+                    }}
+                    className="rounded-full border border-slate-300 dark:border-slate-600 px-2.5 py-1 text-[11px] text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="max-h-[320px] overflow-y-auto space-y-2 pr-1">
               {messages.map((message) => (
                 <div
                   key={message.id}
                   className={`rounded-lg px-3 py-2 text-sm ${
                     message.role === "assistant"
-                      ? "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                      ? message.content.startsWith("[tool]")
+                        ? "bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-200 font-mono text-xs"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
                       : "bg-blue-600 text-white ml-8"
                   }`}
                 >
@@ -162,6 +292,40 @@ export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
                 </div>
               ))}
             </div>
+
+            {debugEnabled && (
+              <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/10 p-2 space-y-2">
+                <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+                  Debug trace (latest first)
+                </div>
+                {debugEntries.length === 0 && (
+                  <div className="text-xs text-amber-700 dark:text-amber-400">
+                    Send a message to capture prompt and model call details.
+                  </div>
+                )}
+                {debugEntries.slice(-3).reverse().map((entry) => (
+                  <div key={entry.id} className="rounded border border-amber-200 dark:border-amber-800 p-2 space-y-1 bg-white/70 dark:bg-slate-900/40">
+                    <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                      Prompt: {entry.debug?.contextual_prompt || "N/A"}
+                    </div>
+                    <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                      LLM: {entry.debug?.llm_call?.provider || "N/A"} • {entry.debug?.llm_call?.model || "N/A"} • status {entry.debug?.llm_call?.status ?? "N/A"}
+                    </div>
+                    {entry.debug?.llm_call?.error && (
+                      <div className="text-[11px] text-red-700 dark:text-red-300">
+                        Error: {entry.debug.llm_call.error}
+                      </div>
+                    )}
+                    <details>
+                      <summary className="text-[11px] cursor-pointer text-amber-700 dark:text-amber-300">Request/response JSON</summary>
+                      <pre className="mt-1 max-h-40 overflow-auto text-[10px] whitespace-pre-wrap break-all">
+                        {JSON.stringify({ request: entry.request, response: entry.response, debug: entry.debug }, null, 2)}
+                      </pre>
+                    </details>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {previewRule && (
               <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
@@ -179,6 +343,14 @@ export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
                 >
                   {confirming ? "Saving..." : "Confirm"}
                 </button>
+              </div>
+            )}
+            {loading && !previewRule && (
+              <div className="space-y-2 rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+                <div className="text-xs font-medium text-slate-700 dark:text-slate-300">Generating rule preview...</div>
+                <div className="h-3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                <div className="h-3 w-4/5 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                <div className="h-3 w-2/3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
               </div>
             )}
 
@@ -201,7 +373,7 @@ export function ChatAssistant({ selectedTransaction }: ChatAssistantProps) {
                     send();
                   }
                 }}
-                placeholder="Describe what rule you want to create..."
+                placeholder={placeholder}
                 className="flex-1 rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent px-3 py-2 text-sm min-h-[44px]"
               />
               <button

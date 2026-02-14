@@ -20,6 +20,7 @@ test.describe('Dashboard E2E Tests', () => {
     // Verify new cards are present
     await expect(page.locator('text=Cashflow Trend')).toBeVisible();
     await expect(page.locator('text=Overspent Categories')).toBeVisible();
+    await expect(page.locator('text=Cashflow Flow Map')).toBeVisible();
   });
 
   test('should have month selector in header', async ({ page }) => {
@@ -64,6 +65,10 @@ test.describe('Dashboard E2E Tests', () => {
     // Verify cashflow card updated (month label should change)
     const newMonthText = await cashflowCard.textContent();
     expect(newMonthText).toBeDefined();
+
+    // Sankey card should remain visible and update with selected month
+    const sankeyCard = page.locator('[data-testid="cashflow-sankey-card"]');
+    await expect(sankeyCard).toBeVisible();
   });
 
   test('should display cashflow trend chart with 6 months', async ({ page }) => {

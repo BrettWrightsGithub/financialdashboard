@@ -28,7 +28,10 @@ It supports pagination and incremental sync using a stored cursor (`last_order_d
 3. Click **Sync Now**.
 4. Open Intake from popup (**Open Intake**) to review uploaded orders.
 
+If you cleared Amazon intake data and need to re-import old orders, click **Reset Sync Cursor** in the popup first, then run **Sync Now**.
+
 During sync, the extension opens a temporary Amazon Orders tab in the background and closes it automatically when finished.
+When order-history rows do not include item names, the extension now opens order-details pages in the same background tab to enrich item titles and product metadata before upload.
 
 ## Notes
 

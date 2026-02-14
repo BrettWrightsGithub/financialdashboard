@@ -3,6 +3,7 @@
  */
 
 import { supabase } from "./supabase";
+import { buildCashflowSankeyData, createEmptyCashflowSankeyVariants } from "./cashflowSankey";
 import type {
   Account,
   Transaction,
@@ -635,6 +636,7 @@ export async function getDashboardData(month: string) {
         remaining: 0,
         monthlyBudget: 0,
       },
+      cashflowSankey: createEmptyCashflowSankeyVariants(month),
       outstandingInflows: [],
       transactions: [],
     };
@@ -646,7 +648,7 @@ export async function getDashboardData(month: string) {
   const endDate = new Date(year, monthNum, 0).toISOString().split("T")[0];
 
   // Fetch all needed data in parallel
-  const [transactionsRes, budgetRes, inflowsRes, accountsRes] = await Promise.all([
+  const [transactionsRes, budgetRes, inflowsRes, accountsRes, categoriesRes] = await Promise.all([
     supabase
       .from("transactions")
       .select("*")
@@ -656,12 +658,14 @@ export async function getDashboardData(month: string) {
     supabase.from("budget_targets").select("*, categories(name, cashflow_group)").eq("month", monthDate),
     supabase.from("expected_inflows").select("*").eq("month", monthDate),
     supabase.from("accounts").select("id, include_in_cashflow").eq("is_active", true),
+    supabase.from("categories").select("id, name").eq("is_active", true),
   ]);
 
   const allTransactions = transactionsRes.data || [];
   const budgetTargets = budgetRes.data || [];
   const expectedInflows = inflowsRes.data || [];
   const accounts = accountsRes.data || [];
+  const categories = categoriesRes.data || [];
 
   // Create a Set of account IDs that should be included in cashflow
   const cashflowAccountIds = new Set(
@@ -753,6 +757,45 @@ export async function getDashboardData(month: string) {
 
   // Outstanding inflows
   const outstandingInflows = expectedInflows.filter((i) => i.status === "pending");
+  const expectedIncome = expectedInflows.reduce((sum: number, inflow: any) => {
+    if (inflow.status === "pending") return sum + (inflow.expected_amount || 0);
+    if (inflow.status === "partial") {
+      const outstanding = (inflow.expected_amount || 0) - (inflow.actual_amount || 0);
+      return sum + Math.max(outstanding, 0);
+    }
+    return sum;
+  }, 0);
+
+  const expectedOutflow = budgetTargets
+    .filter((bt: any) => {
+      const group = bt.categories?.cashflow_group;
+      return group && group !== "Income" && group !== "Transfer";
+    })
+    .reduce((sum: number, bt: any) => sum + Math.abs(bt.amount || 0), 0);
+
+  const categoryNameById = Object.fromEntries(
+    categories.map((category: { id: string; name: string }) => [category.id, category.name])
+  );
+
+  const commonSankeyParams = {
+    month,
+    transactions,
+    categoryNameById,
+    projection: {
+      expectedIncome,
+      expectedOutflow,
+    },
+  };
+  const cashflowSankey = {
+    source: buildCashflowSankeyData({
+      ...commonSankeyParams,
+      mode: "source",
+    }),
+    category: buildCashflowSankeyData({
+      ...commonSankeyParams,
+      mode: "category",
+    }),
+  };
 
   return {
     cashflow,
@@ -764,6 +807,7 @@ export async function getDashboardData(month: string) {
       remaining: safeToSpend,
       monthlyBudget: discretionaryBudget,
     },
+    cashflowSankey,
     outstandingInflows,
     transactions,
   };

@@ -5,6 +5,7 @@ import { formatCurrency } from "@/lib/cashflow";
 import { getExpectedInflows } from "@/lib/queries";
 import { InlineEditCell } from "./InlineEditCell";
 import type { ExpectedInflow } from "@/types/database";
+import type { AssistantAction, AssistantChatDebugInfo, AssistantChatResult } from "@/lib/assistant/types";
 
 interface ExpectedInflowsSectionProps {
   month: string;
@@ -22,7 +23,23 @@ export function ExpectedInflowsSection({
     source: "",
     expected_amount: "",
     notes: "",
+    counterparty_id: "",
+    category_id: "",
+    expected_date: "",
+    recurrence: "",
   });
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
+  const [assistantPreview, setAssistantPreview] = useState<AssistantAction<"create_expected_inflow"> | null>(null);
+  const [assistantHistory, setAssistantHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugEntries, setDebugEntries] = useState<Array<{
+    id: string;
+    request: unknown;
+    response: unknown;
+    debug: AssistantChatDebugInfo | undefined;
+  }>>([]);
 
   useEffect(() => {
     fetchInflows();
@@ -113,6 +130,10 @@ export function ExpectedInflowsSection({
           expected_amount: amount,
           month,
           notes: newInflow.notes.trim() || null,
+          counterparty_id: newInflow.counterparty_id || null,
+          category_id: newInflow.category_id || null,
+          expected_date: newInflow.expected_date || null,
+          recurrence: newInflow.recurrence || null,
         }),
       });
 
@@ -126,16 +147,104 @@ export function ExpectedInflowsSection({
       setInflows((prev) => [...prev, data]);
       
       // Reset form
-      setNewInflow({ source: "", expected_amount: "", notes: "" });
+      setNewInflow({
+        source: "",
+        expected_amount: "",
+        notes: "",
+        counterparty_id: "",
+        category_id: "",
+        expected_date: "",
+        recurrence: "",
+      });
       setIsAddingNew(false);
+      setAssistantPrompt("");
+      setAssistantPreview(null);
+      setAssistantMessage(null);
     } catch (error) {
       console.error("Error adding inflow:", error);
     }
   };
 
   const handleCancelAdd = () => {
-    setNewInflow({ source: "", expected_amount: "", notes: "" });
+    setNewInflow({
+      source: "",
+      expected_amount: "",
+      notes: "",
+      counterparty_id: "",
+      category_id: "",
+      expected_date: "",
+      recurrence: "",
+    });
     setIsAddingNew(false);
+    setAssistantPreview(null);
+    setAssistantMessage(null);
+  };
+
+  const generateInflowFromPrompt = async () => {
+    const prompt = assistantPrompt.trim();
+    if (!prompt || assistantLoading) return;
+
+    setAssistantLoading(true);
+    setAssistantMessage(null);
+    setAssistantPreview(null);
+
+    try {
+      const nextMessages = [...assistantHistory, { role: "user" as const, content: prompt }];
+      const response = await fetch("/api/assistant/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionHint: "create_expected_inflow",
+          month,
+          messages: nextMessages,
+          debug: debugEnabled,
+        }),
+      });
+      const payload = (await response.json()) as AssistantChatResult & { error?: string };
+      const assistantReply = payload.assistant_message || payload.error || "No parsed inflow was returned.";
+      setAssistantMessage(assistantReply);
+      setAssistantHistory((prev) => [...prev, { role: "user", content: prompt }, { role: "assistant", content: assistantReply }]);
+      if (debugEnabled) {
+        setDebugEntries((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            request: {
+              actionHint: "create_expected_inflow",
+              month,
+              messages: nextMessages,
+              debug: true,
+            },
+            response: payload,
+            debug: payload.debug,
+          },
+        ]);
+      }
+      if (payload.action?.type === "create_expected_inflow") {
+        const action = payload.action as AssistantAction<"create_expected_inflow">;
+        setAssistantPreview(action);
+        setIsAddingNew(true);
+      }
+    } catch {
+      setAssistantMessage("Failed to parse inflow prompt.");
+    } finally {
+      setAssistantLoading(false);
+    }
+  };
+
+  const applyAssistantPreviewToForm = () => {
+    if (!assistantPreview) return;
+    const preview = assistantPreview.preview;
+    setNewInflow({
+      source: preview.source,
+      expected_amount: preview.expected_amount.toFixed(2),
+      notes: preview.notes || "",
+      counterparty_id: preview.counterparty_id || "",
+      category_id: preview.category_id || "",
+      expected_date: preview.expected_date || "",
+      recurrence: preview.recurrence || "",
+    });
+    setIsAddingNew(true);
   };
 
   const totalExpected = inflows.reduce((sum, inflow) => sum + inflow.expected_amount, 0);
@@ -175,6 +284,76 @@ export function ExpectedInflowsSection({
             Add Inflow
           </button>
         </div>
+      </div>
+
+      <div className="mb-4 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/60 dark:bg-blue-900/10 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-semibold text-blue-900 dark:text-blue-200">Prompt Assistant</div>
+          <button
+            type="button"
+            className={`text-xs px-2 py-1 rounded-md border ${
+              debugEnabled
+                ? "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20"
+                : "border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300"
+            }`}
+            onClick={() => setDebugEnabled((prev) => !prev)}
+          >
+            Debug {debugEnabled ? "On" : "Off"}
+          </button>
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={assistantPrompt}
+            onChange={(event) => setAssistantPrompt(event.target.value)}
+            placeholder="e.g., Add monthly rent from Stephanie, $1200, due 1st"
+            className="w-full px-3 py-2 border border-blue-200 dark:border-blue-800 rounded-md bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+          />
+          <button
+            onClick={generateInflowFromPrompt}
+            disabled={assistantLoading || !assistantPrompt.trim()}
+            className="btn-primary text-xs min-h-[44px]"
+          >
+            {assistantLoading ? "Parsing..." : "Preview"}
+          </button>
+        </div>
+        {assistantMessage && (
+          <div className="text-xs text-blue-700 dark:text-blue-300">{assistantMessage}</div>
+        )}
+        {assistantPreview && (
+          <div className="rounded border border-blue-200 dark:border-blue-800 bg-white/80 dark:bg-slate-900/40 p-2">
+            <div className="text-xs text-slate-700 dark:text-slate-300">
+              {assistantPreview.preview.source} • ${assistantPreview.preview.expected_amount.toFixed(2)}
+              {assistantPreview.preview.expected_date ? ` • due ${assistantPreview.preview.expected_date}` : ""}
+              {assistantPreview.preview.category_name ? ` • ${assistantPreview.preview.category_name}` : ""}
+              {assistantPreview.preview.counterparty_name ? ` • from ${assistantPreview.preview.counterparty_name}` : ""}
+            </div>
+            <button
+              onClick={applyAssistantPreviewToForm}
+              className="mt-2 btn-primary text-xs min-h-[44px]"
+            >
+              Use This Draft
+            </button>
+          </div>
+        )}
+        {debugEnabled && (
+          <div className="rounded border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-900/10 p-2 space-y-2">
+            <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">Debug trace (latest first)</div>
+            {debugEntries.length === 0 && (
+              <div className="text-xs text-amber-700 dark:text-amber-400">Run Preview to capture request/response.</div>
+            )}
+            {debugEntries.slice(-2).reverse().map((entry) => (
+              <details key={entry.id}>
+                <summary className="text-[11px] cursor-pointer text-amber-700 dark:text-amber-300">
+                  Prompt: {entry.debug?.contextual_prompt || "N/A"}
+                </summary>
+                <pre className="mt-1 max-h-40 overflow-auto text-[10px] whitespace-pre-wrap break-all">
+                  {JSON.stringify({ request: entry.request, response: entry.response, debug: entry.debug }, null, 2)}
+                </pre>
+              </details>
+            ))}
+          </div>
+        )}
       </div>
 
       {inflows.length === 0 && !isAddingNew ? (
@@ -289,6 +468,15 @@ export function ExpectedInflowsSection({
                              focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
+
+                {(newInflow.expected_date || newInflow.recurrence || newInflow.category_id || newInflow.counterparty_id) && (
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    {newInflow.expected_date ? `Expected date: ${newInflow.expected_date}. ` : ""}
+                    {newInflow.recurrence ? `Recurrence: ${newInflow.recurrence}. ` : ""}
+                    {newInflow.category_id ? "Category mapped. " : ""}
+                    {newInflow.counterparty_id ? "Counterparty mapped." : ""}
+                  </div>
+                )}
 
                 <div className="flex gap-2">
                   <button

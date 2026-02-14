@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
 export async function POST(request: NextRequest) {
+  if (!supabase) {
+    return NextResponse.json({ error: "Supabase client is unavailable" }, { status: 500 });
+  }
+  const client = supabase;
+
   try {
     const body = await request.json();
     const { sourceMonth, destMonth, includeExpectedInflows = false } = body;
@@ -36,7 +41,7 @@ export async function POST(request: NextRequest) {
     const destMonthDate = `${destMonth}-01`;
 
     // Check if destination month already has budget targets
-    const { data: existingTargets, error: checkError } = await supabase
+    const { data: existingTargets, error: checkError } = await client
       .from("budget_targets")
       .select("id")
       .eq("month", destMonthDate)
@@ -58,7 +63,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch budget targets from source month
-    const { data: sourceTargets, error: fetchError } = await supabase
+    const { data: sourceTargets, error: fetchError } = await client
       .from("budget_targets")
       .select(`
         category_id,
@@ -93,7 +98,7 @@ export async function POST(request: NextRequest) {
     }));
 
     // Copy budget targets
-    const { data: insertedTargets, error: insertError } = await supabase
+    const { data: insertedTargets, error: insertError } = await client
       .from("budget_targets")
       .insert(targetsToInsert)
       .select(`
@@ -130,7 +135,7 @@ export async function POST(request: NextRequest) {
     // Copy expected inflows if requested
     if (includeExpectedInflows) {
       // Check if destination month already has expected inflows
-      const { data: existingInflows, error: checkInflowsError } = await supabase
+      const { data: existingInflows, error: checkInflowsError } = await client
         .from("expected_inflows")
         .select("id")
         .eq("month", destMonthDate)
@@ -152,7 +157,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Fetch expected inflows from source month
-      const { data: sourceInflows, error: fetchInflowsError } = await supabase
+      const { data: sourceInflows, error: fetchInflowsError } = await client
         .from("expected_inflows")
         .select(`
           source,
@@ -190,7 +195,7 @@ export async function POST(request: NextRequest) {
         }));
 
         // Copy expected inflows
-        const { data: insertedInflows, error: insertInflowsError } = await supabase
+        const { data: insertedInflows, error: insertInflowsError } = await client
           .from("expected_inflows")
           .insert(inflowsToInsert)
           .select(`

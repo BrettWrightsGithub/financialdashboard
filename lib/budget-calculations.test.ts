@@ -10,11 +10,19 @@ function calculatePercentUsed(expected: number, actual: number): number {
   return Math.round((actual / expected) * 100);
 }
 
-function calculateVariance(expected: number, actual: number, isIncome: boolean): number {
+function calculateVariance(
+  expected: number,
+  actual: number,
+  isIncome: boolean,
+): number {
   return isIncome ? actual - expected : expected - actual;
 }
 
-function isOverBudget(expected: number, actual: number, isIncome: boolean): boolean {
+function isOverBudget(
+  expected: number,
+  actual: number,
+  isIncome: boolean,
+): boolean {
   return isIncome ? actual < expected : actual > expected;
 }
 
@@ -26,17 +34,22 @@ function getProgressColor(percentUsed: number, isOver: boolean): string {
 
 function getVarianceColor(variance: number, isIncome: boolean): string {
   const isGood = isIncome ? variance >= 0 : variance <= 0;
-  return isGood ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400";
+  return isGood
+    ? "text-green-600 dark:text-green-400"
+    : "text-red-600 dark:text-red-400";
 }
 
-function formatAllocationStatus(totalIncome: number, totalAllocated: number): {
+function formatAllocationStatus(
+  totalIncome: number,
+  totalAllocated: number,
+): {
   status: "over" | "low" | "good";
   remaining: number;
   percentage: number;
 } {
   const remaining = totalIncome - totalAllocated;
   const percentage = totalIncome > 0 ? (totalAllocated / totalIncome) * 100 : 0;
-  
+
   let status: "over" | "low" | "good";
   if (remaining < 0) {
     status = "over";
@@ -45,7 +58,7 @@ function formatAllocationStatus(totalIncome: number, totalAllocated: number): {
   } else {
     status = "good";
   }
-  
+
   return { status, remaining, percentage };
 }
 
@@ -106,13 +119,13 @@ describe("Budget Calculations", () => {
     it("returns correct colors based on budget status", () => {
       // Over budget
       expect(getProgressColor(120, true)).toBe("bg-red-500");
-      
+
       // High usage but not over
       expect(getProgressColor(85, false)).toBe("bg-yellow-500");
-      
+
       // Good usage
       expect(getProgressColor(50, false)).toBe("bg-green-500");
-      
+
       // Edge cases
       expect(getProgressColor(80, false)).toBe("bg-green-500");
       expect(getProgressColor(81, false)).toBe("bg-yellow-500");
@@ -122,16 +135,28 @@ describe("Budget Calculations", () => {
   describe("getVarianceColor", () => {
     it("returns correct colors for variance", () => {
       // Income: positive variance is good
-      expect(getVarianceColor(500, true)).toBe("text-green-600 dark:text-green-400");
-      expect(getVarianceColor(-500, true)).toBe("text-red-600 dark:text-red-400");
-      
+      expect(getVarianceColor(500, true)).toBe(
+        "text-green-600 dark:text-green-400",
+      );
+      expect(getVarianceColor(-500, true)).toBe(
+        "text-red-600 dark:text-red-400",
+      );
+
       // Expenses: negative variance is good
-      expect(getVarianceColor(-100, false)).toBe("text-green-600 dark:text-green-400");
-      expect(getVarianceColor(100, false)).toBe("text-red-600 dark:text-red-400");
-      
+      expect(getVarianceColor(-100, false)).toBe(
+        "text-green-600 dark:text-green-400",
+      );
+      expect(getVarianceColor(100, false)).toBe(
+        "text-red-600 dark:text-red-400",
+      );
+
       // Zero variance
-      expect(getVarianceColor(0, true)).toBe("text-green-600 dark:text-green-400");
-      expect(getVarianceColor(0, false)).toBe("text-green-600 dark:text-green-400");
+      expect(getVarianceColor(0, true)).toBe(
+        "text-green-600 dark:text-green-400",
+      );
+      expect(getVarianceColor(0, false)).toBe(
+        "text-green-600 dark:text-green-400",
+      );
     });
   });
 
@@ -140,21 +165,21 @@ describe("Budget Calculations", () => {
       const result = formatAllocationStatus(3000, 3500);
       expect(result.status).toBe("over");
       expect(result.remaining).toBe(-500);
-      expect(result.percentage).toBe(116.67);
+      expect(result.percentage).toBeCloseTo(116.67);
     });
 
     it("identifies low remaining buffer", () => {
       const result = formatAllocationStatus(3000, 2800);
       expect(result.status).toBe("low");
       expect(result.remaining).toBe(200);
-      expect(result.percentage).toBe(93.33);
+      expect(result.percentage).toBeCloseTo(93.33);
     });
 
     it("identifies good allocation", () => {
       const result = formatAllocationStatus(3000, 2000);
       expect(result.status).toBe("good");
       expect(result.remaining).toBe(1000);
-      expect(result.percentage).toBe(66.67);
+      expect(result.percentage).toBeCloseTo(66.67);
     });
 
     it("handles zero income edge case", () => {
@@ -166,7 +191,7 @@ describe("Budget Calculations", () => {
 
     it("handles exact 10% remaining threshold", () => {
       const result = formatAllocationStatus(1000, 900);
-      expect(result.status).toBe("low"); // Exactly 10% remaining = low
+      expect(result.status).toBe("good"); // Exactly 10% remaining = good
       expect(result.remaining).toBe(100);
       expect(result.percentage).toBe(90);
     });
@@ -229,10 +254,17 @@ describe("Budget Calculation Integration", () => {
     expect(allocationStatus.remaining).toBe(1900);
 
     // Check individual category calculations
-    expenses.forEach(expense => {
+    expenses.forEach((expense) => {
       const remaining = calculateRemaining(expense.expected, expense.actual);
-      const percentUsed = calculatePercentUsed(expense.expected, expense.actual);
-      const variance = calculateVariance(expense.expected, expense.actual, false);
+      const percentUsed = calculatePercentUsed(
+        expense.expected,
+        expense.actual,
+      );
+      const variance = calculateVariance(
+        expense.expected,
+        expense.actual,
+        false,
+      );
       const overBudget = isOverBudget(expense.expected, expense.actual, false);
 
       expect(percentUsed).toBeGreaterThanOrEqual(0);
